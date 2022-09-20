@@ -42,7 +42,6 @@ def create_grid(index,grid,trajs,kappas,identities,data,major_grid=None):
     """
         This function returns a Grid object based on the grid points and the trajectories it receives
         The grid points should be defined on a single distance scale (for each refinement a different grid should be defined)
-
         * Arguments
             grid            NxD array with all grid points
             trajs           NxMxD array with trajectory of M steps for every grid point
@@ -518,3 +517,4 @@ class Grid(object):
         print('ref:', [[l for l in n.loc] for n in self.reference_nodes])
         print('deviant:', [[l for l in n.loc] for n in self.deviant_nodes])
         print('realized_ref:', [[l for l in n.loc] for n in self.realized_virtual_reference_nodes])
+        

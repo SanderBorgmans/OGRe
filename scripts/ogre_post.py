@@ -5,26 +5,17 @@ from ogre.post.core import *
 
 from molmod.units import *
 
-
-if (len(sys.argv) < 2):
-    print("Usage: ogre_post.py [<options>]")
-    print("This postprocessing script expects you to have your trajectory data stored in a 'trajs' folder using the h5 file format,\n"
-           + "with each trajectory representing a US simulation idenitified by its grid number and simulation index; e.g. trajs/traj_0_0.h5.\n" 
-           + "The only required attribute is 'trajectory/cv_values' representing the CVs during the simulations with shape (N_sim, N_CV)." 
-           )
-    sys.exit(1)
-
 parser = OptionParser(usage="Usage: %prog [<options>]")
 parser.add_option("--refresh",
-          action="store_true", dest="refresh", help="perform a clean run, removes all pickle files [default: %default]", default=False)
+          action="store_true", dest="refresh", help="perform a clean run [default: %default]", default=False)
 parser.add_option("--overlap",
-          action="store_true", dest="overlap", help="perform the overlap analysis, this should not be repeated before performing new simulations! [default: %default]", default=False)
+          action="store_true", dest="overlap", help="only perform the overlap analysis, debugging purposes [default: %default]", default=False)
 parser.add_option("--fes",
-          action="store_true", dest="fes", help="calculate the FES for the current data [default: %default]", default=False)
+          action="store_true", dest="fes", help="construct the FES for the subsequent refinements [default: %default]", default=False)
 parser.add_option("--test",
           action="store_true", dest="test", help="perform the overlap analysis, without creating/changing/removing any files [default: %default]", default=False)
 parser.add_option("--fes_index",
-                  action="store", type="int", dest="fes_index", help="number of grid iterations to take into account [default: %default]", default=0)
+          action="store", type="int", dest="fes_index", help="number of grid iterations to take into account [default: %default]", default=0)
 parser.add_option("--plot_deviating",
           action="store_true", dest="plot_deviating", help="plot all deviating trajectories [default: %default]", default=False)
 parser.add_option("--plot_overlap",

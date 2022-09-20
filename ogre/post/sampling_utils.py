@@ -1,3 +1,4 @@
+
 #! /usr/bin/python
 import numpy as np
 
@@ -122,3 +123,4 @@ def make_unique(steps,points,get_mask=False):
 def find_node_index(tree,point):
     ds,idx = tree.query(np.round(point,DECIMALS),1) # Find the point
     return ds<precision, idx
+    

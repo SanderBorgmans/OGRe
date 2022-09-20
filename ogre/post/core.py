@@ -1,5 +1,5 @@
 #! /usr/bin/python
-import os,sys,h5py,copy,warnings,glob
+import os,sys,copy,warnings,glob
 import numpy as np
 import numpy.ma as ma
 import matplotlib.pyplot as pt
@@ -11,6 +11,7 @@ from ogre.input.utils import get_cv_units
 from molmod.units import *
 
 
+#import pymmbar
 __all__ = ['generate_fes_thermolib','investigate_overlap']
 
 ################################
@@ -102,8 +103,6 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
 
     grid_utils.write_fes(data,grid,fes_array,index,suffix=suffix,fes_err=fes_err)
     grid_utils.plot_fes(data,grid,fes_array,index,suffix=suffix,fes_err=fes_err)
-
-
 ################################
 # CORE CODE
 
@@ -156,7 +155,6 @@ def format_grid_file(data,test=False,verbose=True):
 
     if len(identities)==0 and verbose:
         print('It might be a good idea to compress your data using ogre_compress_iteration.py, if you do not need the trajectory data for other purposes.')
-
 
 def investigate_overlap(data,test=False):
     """

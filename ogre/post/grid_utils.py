@@ -5,10 +5,17 @@ import matplotlib.pyplot as pt
 
 from molmod.io import load_chk
 from molmod.units import *
-from ogre.input.utils import wigner_seitz_cell
-from ogre.post.sampling import ReferenceNode, Node
+from ndfsampler.input.utils import wigner_seitz_cell
+from ndfsampler.post.sampling import ReferenceNode, Node
 
 warnings.filterwarnings('ignore')
+
+def load_potential_file(file_loc):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("module",file_loc)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 def load_compressed_trajs(compressed_fn,number,grids,trajs,dkappas,identities):
     with h5py.File(compressed_fn,'r') as f:
@@ -351,6 +358,13 @@ def plot_fes(data,grid,fes,index,avg_window=1,suffix=None,fes_err=None):
         N = avg_window
         avg_fes = np.convolve(fes, np.ones((N,))/N, mode='valid')
         avg_grid = np.convolve(grid[:,0], np.ones((N,))/N, mode='valid')
+
+        try:
+            potential = load_potential_file('./potential.py').Potential
+            ax.plot(avg_grid,potential.eval(avg_grid)-np.min(potential.eval(avg_grid)),'--')
+        except (FileNotFoundError,NotImplementedError):
+            if data['mode'] == 'analytical':
+                print('There was no potential.py file or eval method available for comparison with calculated FES')
         ax.plot(avg_grid,avg_fes-np.nanmin(avg_fes))
 
         if fes_err is not None and not np.isnan(fes_err).all():
@@ -402,3 +416,4 @@ def write_colvars(filename,rtrajs,rgrids,rkappas,verbose=True):
 
             # Write the value of the collective variable and the harmonic spring constant
             g.write('colvars/colvar_{}\t'.format(n) + "\t".join([str(cv) for cv in cvs]) + '\t' + "\t".join([str(kappa) for kappa in kappas]) + '\n')
+            
