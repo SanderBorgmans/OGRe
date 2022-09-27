@@ -51,6 +51,7 @@ class OGRe_Input(object):
             edges
                 list of minimum and maximum bound for each cv in unit
                 or already converted to dictionary with 'min' and 'max' as keys
+                alternatively 'cof2d' to automatically generate a grid based on the unit cell
 
             cv_units
                 list of molmod units as a string in which the cvs are expressed
@@ -112,21 +113,6 @@ class OGRe_Input(object):
             if len(glob.glob('pars*.txt'))==0:
                 raise ValueError('No force field files found!')
 
-        try:
-            assert hasattr(self,'edges')
-            assert hasattr(self,'spacings')
-            assert hasattr(self,'kappas')
-        except AssertionError:
-            raise ValueError('You did not specify the required input parameters')
-
-        try:
-            if isinstance(self.edges,dict):
-                assert len(self.edges['min'])==len(self.kappas) # check whether the number of edges is consistent with the number of kappas
-            else:
-                assert len(self.edges)==len(self.kappas)*2 # check whether the number of edges is consistent with the number of kappas
-            assert len(self.kappas)==len(self.spacings)
-        except AssertionError:
-            raise ValueError('The number of specified edges/kappas/spacings was not consistent!')
 
         # SIMULATION PARAMETERS (others default values are assigned in sim/core.py)
         if not hasattr(self,'mdsteps'):
@@ -155,6 +141,14 @@ class OGRe_Input(object):
 
         if not hasattr(self,'fes_unit') or self.fes_unit is None:   
             self.fes_unit = 'kjmol'
+
+        # If cof2d setting True, calculate the edges instead of parsing them
+        if hasattr(self,'cof2d') and self.cof2d:
+            cv_units = get_cv_units(vars(self))
+            assert cv_units[0]==cv_units[1]
+            rvecs = chk['rvecs']/cv_units[0] # assume rvecs are in atomic units
+            edges = get_edges(rvecs) 
+            self.edges = {'min' : [float(edges[0]),float(edges[2])], 'max' : [float(edges[1]),float(edges[3])]}
 
         # Convert edges to dictionary for easy parsing
         if not isinstance(self.edges,dict):
@@ -185,6 +179,24 @@ class OGRe_Input(object):
             self.HISTOGRAM_BIN_WIDTHS = [spacing/self.MAX_LAYERS/2. for spacing in self.spacings]
             print('The histogram bin width for overlap calculation has been set to ', self.HISTOGRAM_BIN_WIDTHS)
     
+
+        try:
+            assert hasattr(self,'edges')
+            assert hasattr(self,'spacings')
+            assert hasattr(self,'kappas')
+        except AssertionError:
+            raise ValueError('You did not specify the required input parameters')
+
+        try:
+            if isinstance(self.edges,dict):
+                assert len(self.edges['min'])==len(self.kappas) # check whether the number of edges is consistent with the number of kappas
+            else:
+                assert len(self.edges)==len(self.kappas)*2 # check whether the number of edges is consistent with the number of kappas
+            assert len(self.kappas)==len(self.spacings)
+        except AssertionError:
+            raise ValueError('The number of specified edges/kappas/spacings was not consistent!')
+
+
         # Save all settings
         save2yaml(self,mode=self.mode)
 

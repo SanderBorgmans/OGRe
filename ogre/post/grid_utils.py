@@ -5,8 +5,8 @@ import matplotlib.pyplot as pt
 
 from molmod.io import load_chk
 from molmod.units import *
-from ndfsampler.input.utils import wigner_seitz_cell
-from ndfsampler.post.sampling import ReferenceNode, Node
+from ogre.input.utils import wigner_seitz_cell
+from ogre.post.sampling import ReferenceNode, Node
 
 warnings.filterwarnings('ignore')
 

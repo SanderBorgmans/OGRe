@@ -186,7 +186,7 @@ class OGRe_Simulation(object):
 
             # Adapt structure, and save it for later use
             Path('init_structures/').mkdir(parents=True, exist_ok=True)
-            self.custom_cv.adapt_structure(self,ff)
+            self.custom_cv.adapt_structure(ff,self.cvs)
 
             # Define umbrella
             umbrella = ForcePartBias(system, log=self.log, timer=self.timer)
