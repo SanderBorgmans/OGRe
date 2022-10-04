@@ -65,34 +65,40 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
 
     # Launch thermolib
     fes_err = np.array([np.nan,np.nan])
+    bin_edges = [np.linspace(edges['min'][n],edges['max'][n],b+1) for n,b in enumerate(bins)]
+
     if len(steps) == 1:
         # 1D CASE
-        temp_none, biasses, trajectories = thermolib.read_wham_input(filename, path_template_colvar_fns='%s', stride=1, verbose=False),
-        bin_edges = [np.linspace(edges['min'][n],edges['max'][n],b+1) for n,b in enumerate(bins)]
-
-        #1D case
+        _, biasses, trajectories = thermolib.read_wham_input(filename, path_template_colvar_fns='%s', stride=1, verbose=False)
+        
         hist = thermolib.Histogram1D.from_wham_c(bin_edges[0], trajectories, biasses, temp, error_estimate=error_estimate,
                                        verbosity='low', convergence=1e-7, Nscf=10000)
-
+                                       
         fes = thermolib.BaseFreeEnergyProfile.from_histogram(hist, temp)
         fes.set_ref(ref='min')
         grid = fes.cvs.copy().reshape(*bins,len(steps))
         fes_array = fes.fs.copy().reshape(*bins)
+
         if error_estimate is not None:
-            fes_err = np.array([fes.flower.copy().reshape(*bins),fes.fupper.copy().reshape(*bins)])
+            if fes.flower is not None and fes.fupper is not None: 
+                fes_err = np.array([fes.flower.copy().reshape(*bins),fes.fupper.copy().reshape(*bins)])
 
     elif len(steps) == 2:
         # 2D CASE
+        _, biasses, trajectories = thermolib.read_wham_input_2D(filename, path_template_colvar_fns='%s', stride=1, verbose=False)
+
         hist = thermolib.Histogram2D.from_wham_c(bin_edges, trajectories, biasses, temp, error_estimate=error_estimate,
                                        verbosity='low', convergence=1e-7, Nscf=10000, overflow_threshold=1e-150)
 
         fes = thermolib.FreeEnergySurface2D.from_histogram(hist, temp)
         fes.set_ref(ref='min')
 
-        grid = np.meshgrid(fes.cv1.copy(),fes.cv2s.copy()).reshape(*bins,len(steps))
+        grid = np.array(np.meshgrid(fes.cv1s.copy(),fes.cv2s.copy())).T.reshape(*bins,len(steps))
+
         fes_array = fes.fs.copy().reshape(*bins)
         if error_estimate is not None:
-            fes_err = np.array([fes.flower.copy().reshape(*bins),fes.fupper.copy().reshape(*bins)])
+            if fes.flower is not None and fes.fupper is not None: 
+                fes_err = np.array([fes.flower.copy().reshape(*bins),fes.fupper.copy().reshape(*bins)])
     else:
         raise NotImplementedError('Thermolib does not support N-dim free energy evaluation at this point.')
 
