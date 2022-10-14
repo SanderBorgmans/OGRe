@@ -238,7 +238,7 @@ class Grid(object):
 
         if data is not None:
             binwidths = data['HISTOGRAM_BIN_WIDTHS']
-            bins = tuple([((self.edges['max'][i]+data['spacings'][i])-(self.edges['min'][i]-data['spacings'][i]))/binwidths[i] for i in range(t1.shape[1])])
+            bins = tuple([int(((self.edges['max'][i]+data['spacings'][i])-(self.edges['min'][i]-data['spacings'][i]))//binwidths[i]) for i in range(t1.shape[1])])
         else:
             bins = 201
         
