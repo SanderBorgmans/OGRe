@@ -5,7 +5,7 @@ OGRe is distributed as open source software under the conditions of the GPL lice
 
 ## INSTALLATION
 OGre requires the following packages to work:
-- cython, numpy, scipy, h5py, matplotlib
+- cython, numpy, scipy, h5py, matplotlib, yaml
 - molmod
 
 ## INPUT
