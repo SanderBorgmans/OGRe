@@ -8,6 +8,7 @@ OGRe-Yaff requires the following packages to work:
 - cython, numpy, scipy,  h5py, matplotlib, yaml
 - molmod
 - yaff
+- ThermoLIB
 
 
 ## INPUT
