@@ -4,7 +4,7 @@ OGRe-Yaff or "Optimal Grid Refinement tool" is a tool to minimize the computatio
 OGRe is distributed as open source software under the conditions of the GPL license version 3. Read the file COPYING for more details, or visit http://www.gnu.org/licenses/
 
 ## INSTALLATION
-OGre-Yaff requires the following packages to work:
+OGRe-Yaff requires the following packages to work:
 - cython, numpy, scipy
 - molmod
 - yaff
