@@ -7,6 +7,7 @@ from molmod.io import load_chk
 from molmod.units import *
 from ogre.input.utils import wigner_seitz_cell
 from ogre.post.sampling import ReferenceNode, Node
+from ogre.post.sampling_utils import precision
 
 warnings.filterwarnings('ignore')
 
@@ -17,14 +18,15 @@ def load_potential_file(file_loc):
     spec.loader.exec_module(module)
     return module
 
-def load_compressed_trajs(compressed_fn,number,grids,trajs,dkappas,identities):
+def load_compressed_trajs(compressed_fn,number,grids,trajs,dkappas,identities,types):
     with h5py.File(compressed_fn,'r') as f:
         grids[number]   = np.array(f['grids'])
         trajs[number]   = np.array(f['trajs'])
         dkappas[number] = np.array(f['dkappas'])
         identities[number] = [tuple(identity) for identity in f['identities']]
+        types[number] = [t for t in f['types']]
 
-def load_trajs(gn,data,restart,grids,trajs,dkappas,identities):
+def load_trajs(gn,data,restart,grids,trajs,dkappas,identities,types):
     grid = np.genfromtxt(gn, delimiter=',',dtype=None,skip_header=1)
 
     if grid.size==1: # problem with single line files
@@ -35,6 +37,7 @@ def load_trajs(gn,data,restart,grids,trajs,dkappas,identities):
         gnr = int(point[0])
         nr = int(point[1])
         identity = (gnr,nr)
+        dtype = point[4].decode()
 
         # Multi load: allows the loading of both compressed trajectories and non-compressed trajectories
         # This could occur in cases that the initial grid edges would be extended
@@ -64,18 +67,20 @@ def load_trajs(gn,data,restart,grids,trajs,dkappas,identities):
                     trajs[gnr]   = tr
                     dkappas[gnr] = kappas
                     identities[gnr] = [identity]
+                    types[gnr] = [dtype]
                 else:
                     grids[gnr]   = np.vstack((grids[gnr], cvs))
                     trajs[gnr]   = np.vstack((trajs[gnr], tr))
                     dkappas[gnr] = np.vstack((dkappas[gnr], kappas))
                     identities[gnr].append(identity)
+                    types[gnr].append(dtype)
 
         except OSError:
-            restart += '{},{},{},{}\n'.format(identity[0],identity[1],"*".join(['{:.8f}'.format(p) for p in cvs]),"*".join(['{:.8e}'.format(k) for k in kappas]))
+            restart += '{},{},{},{}\n'.format(identity[0],identity[1],"*".join(['{:.8f}'.format(p) for p in cvs]),"*".join(['{:.8e}'.format(k) for k in kappas]),dtype)
 
-    if not restart == "":
+    if len(restart)>0:
         gr = open('grid_restart.txt','w')
-        gr.write('grid,nr,cvs,kappas\n')
+        gr.write('grid,nr,cvs,kappas,type\n')
         gr.write(restart)
         gr.close()
         raise ValueError("Some simulations have to be restarted!")
@@ -90,6 +95,7 @@ def load_grid(data,index=None,verbose=True):
     trajs = {}
     dkappas = {}
     identities = {}
+    types = {}
 
     restart = ""
 
@@ -118,15 +124,15 @@ def load_grid(data,index=None,verbose=True):
                 # Load both the compressed part and new trajectories, this is convenient when expanding grid
                 print("Loading both compressed file and trajectory files for grid {}.".format(number))
                 assert compressed
-                load_compressed_trajs(compressed_fn,number,grids,trajs,dkappas,identities)
-                load_trajs(gn,data,restart,grids,trajs,dkappas,identities)
+                load_compressed_trajs(compressed_fn,number,grids,trajs,dkappas,identities,types)
+                load_trajs(gn,data,restart,grids,trajs,dkappas,identities,types)
             else:
                 if compressed:
                     print("Loading compressed file for grid {}.".format(number))
-                    load_compressed_trajs(compressed_fn,number,grids,trajs,dkappas,identities)
+                    load_compressed_trajs(compressed_fn,number,grids,trajs,dkappas,identities,types)
                 else:
                     print("Loading trajectory files for grid {}.".format(number))
-                    load_trajs(gn,data,restart,grids,trajs,dkappas,identities)
+                    load_trajs(gn,data,restart,grids,trajs,dkappas,identities,types)
 
         with open('trajs.pkl','wb') as fp:
             pickle.dump(trajs,fp)
@@ -136,6 +142,8 @@ def load_grid(data,index=None,verbose=True):
             pickle.dump(dkappas,fp)
         with open('identities.pkl','wb') as fp:
             pickle.dump(identities,fp)
+        with open('types.pkl','wb') as fp:
+            pickle.dump(types,fp)
     else:
         with open('trajs.pkl','rb') as fp:
             trajs = pickle.load(fp)
@@ -145,6 +153,8 @@ def load_grid(data,index=None,verbose=True):
             dkappas = pickle.load(fp)
         with open('identities.pkl','rb') as fp:
             identities = pickle.load(fp)
+        with open('types.pkl','rb') as fp:
+            types = pickle.load(fp)
 
     if verbose:
         print("Loading trajectories took {} seconds.".format(time.time()-init))
@@ -157,119 +167,164 @@ def load_grid(data,index=None,verbose=True):
         trajs   = { k:v for k,v in trajs.items() if k<index+1 }
         dkappas = { k:v for k,v in dkappas.items() if k<index+1 }
         identities = { k:v for k,v in identities.items() if k<index+1 }
+        types = { k:v for k,v in types.items() if k<index+1 }
 
-    return grids, trajs, dkappas, identities
+    return grids, trajs, dkappas, identities, types
 
-def write_grid(n,data,grid,test=False):
+def node2gridinfo(grid, node, identity, increase_kappa):
+    # For a node, return the required array
+    if increase_kappa:
+        node.kappas = node.kappas*grid.KAPPA_GROWTH_FACTOR
+    return np.array([identity[0], identity[1],
+            "*".join(['{:.8f}'.format(p) for p in node.loc]).encode(),
+            "*".join(['{:.8e}'.format(kappa) for kappa in node.kappas]).encode(),
+            node.type.encode()
+        ],dtype=object)
+
+def add_node_to_grid_info(grid,grid_info,node,increase_kappa=False,require_presence=False,verbose=False,finalize=False,reason=""):
+    if isinstance(node,Node):
+        # if it is a Node, we can use its identity to check whether it exists
+        idx = np.where((np.array(grid_info[:,0],dtype=int)==node.identity[0]) & 
+                       (np.array(grid_info[:,1],dtype=int)==node.identity[1]))[0]
+        index = idx[0]
+        identity = (grid_info[index][0],grid_info[index][1])
+    else:
+        # else use its location
+        location_info = "*".join(['{:.8f}'.format(p) for p in node.loc]).encode()
+        idx = np.where(grid_info[:,2] == location_info)[0]
+        if idx.size == 0:
+            identity = (grid_info[0][0],str(grid_info.shape[0]).encode())
+        else:
+            index = idx[0]
+            identity = (grid_info[index][0],grid_info[index][1])
+
+    if verbose: print(identity[0].decode(),identity[1].decode())
+
+    if require_presence: 
+        assert idx.size==1
+        if not finalize:
+            # Remove deviant trajectory
+            #print("Remove {} trajs/traj_{}_{}.h5".format(reason,identity[0].decode(),identity[1].decode()))
+            os.remove('trajs/traj_{}_{}.h5'.format(identity[0].decode(),identity[1].decode()))
+        else:
+            # This is to finalize an entry in grid file
+            assert not increase_kappa
+            new_entry = node2gridinfo(grid,node,identity,increase_kappa)
+            grid_info[index][-1] = new_entry[-1] # change the type
+            return grid_info
+
+    if idx.size>0:
+        assert idx.size==1
+        # change the kappa values, the rest should be the same
+        grid_info[index] = node2gridinfo(grid,node,identity,increase_kappa)
+    else:
+        grid_info = np.vstack((grid_info,node2gridinfo(grid,node,identity,increase_kappa)))
+
+    return grid_info
+
+def dump_grid(grid):
+    from pathlib import Path
+    Path('debug/').mkdir(parents=True, exist_ok=True)
+    with open('debug/debug_grid_{}.txt'.format(grid.index),'w') as f:
+        for n in grid.nodes:
+            f.write("{}\t{}\n".format(",".join(['{: .8f}'.format(p) for p in n.loc]), n.type))
+
+    if grid.major_grid is not None:
+        with open('debug/debug_major_grid_{}.txt'.format(grid.index),'w') as f:
+            for n in grid.major_grid.reference_nodes:
+                f.write("{}\t{}\n".format(",".join(['{: .8f}'.format(p) for p in n.loc]), n.type))
+
+
+def write_grid(grid,max_index=None,test=False):
     if test: # if test the user does not want any files to be created, changed, or removed
         return
-    if 'MAX_LAYERS' in data and n+1==data['MAX_LAYERS']:
-        #if len(grid.finer_nodes)>0:
+
+    # First we check whether we need to write the following grid layer information
+    if max_index is not None and grid.index+1 == max_index:
         print('MAX_LAYERS reached.')
     else:
-        fname = 'grid{0:0=2d}.txt'.format(n+1)
-        # Check if grid file already exists, if it does, append new grid points (assume only grid points are added with refinement, not removed)
-        if os.path.exists(fname):
-            # Read the existing grid points
-            with open(fname,'r') as f:
-                lines = f.readlines()
-                lines = lines[1:] # skipheader
+        # If so, loop over all finer nodes and the non-refined reference nodes for these finer nodes
+        next_grid_name = 'grid{0:0=2d}.txt'.format(grid.index+1)
 
-            # Assume location alone is enough to identify points
-            ids_existing = []
-            locs_existing = []
-            kappas_existing = []
-            for line in lines:
-                identity = int(line.split(',')[1])
-                loc = tuple([float(l) for l in line.split(',')[2].split('*')])
-                kappa = tuple([float(k) for k in line.split(',')[3].split('*')])
-                ids_existing.append(identity)
-                locs_existing.append(loc)
-                kappas_existing.append(kappa)
+        # if the file does not exist, just write the required nodes, if any finer nodes exist
+        if len(grid.finer_nodes)>0:
+            print('Checking next grid {}'.format(grid.index+1))
+            if not os.path.exists(next_grid_name):
+                with open(next_grid_name,'w') as f:
+                    f.write('grid,nr,cvs,kappas,type\n')
+                    idx = 0
 
-            # Sanity check
-            try:
-                assert max(ids_existing)+1==len(lines)
-            except AssertionError:
-                raise ValueError('An error occured, and some identities are not unique')
-            except ValueError:
-                pass # no existing ids
+                    for node in grid.finer_nodes:
+                        f.write('{},{},{},{},{}\n'.format(grid.index+1,idx,"*".join(['{:.8f}'.format(p) for p in node.loc]),"*".join(['{:.8e}'.format(kappa) for kappa in node.kappas]),node.type))
+                        idx += 1
+                    for node in grid.reference_nodes:
+                        if not node.refined:
+                            f.write('{},{},{},{},{}\n'.format(grid.index+1,idx,"*".join(['{:.8f}'.format(p) for p in node.loc]),"*".join(['{:.8e}'.format(kappa) for kappa in node.kappas]),node.type))
+                            idx += 1
+            else:
+                # Make the necessary replacements and additions
+                # Read the grid file
+                next_grid_information = np.genfromtxt(next_grid_name, delimiter=',',dtype=object,skip_header=1,encoding='utf')
+                
+                if next_grid_information.size==1: # problem with single line files
+                    next_grid_information = np.array([next_grid_information])
 
-            locs_grid = {}
-            for node in grid.finer_nodes:
-                locs_grid[tuple(node.loc)] = node
-
-        
-            with open(fname,'a') as f:
-                idx=0
-                for k,node in locs_grid.items():
-                    if k in locs_existing: # check if kappa value remained unaltered
-                        try:
-                            assert tuple(node.kappas)==kappas_existing[locs_existing.index(k)]
-                        except AssertionError:
-                            continue
-                    else: # write the new grid point
-                        f.write('{},{},{},{}\n'.format(n+1,len(lines)+idx,"*".join(['{:.8f}'.format(p) for p in node.loc]),"*".join(['{:.8e}'.format(kappa) for kappa in node.kappas])))
-                        idx+=1
-
-        else: # else make the grid file
-            with open(fname,'w') as f:
-                f.write('grid,nr,cvs,kappas\n')
-                idx = 0
                 for node in grid.finer_nodes:
-                    f.write('{},{},{},{}\n'.format(n+1,idx,"*".join(['{:.8f}'.format(p) for p in node.loc]),"*".join(['{:.8e}'.format(kappa) for kappa in node.kappas])))
-                    idx += 1
+                    next_grid_information = add_node_to_grid_info(grid,next_grid_information,node,increase_kappa=False,require_presence=False)
+                for node in grid.reference_nodes:
+                    if not node.refined:
+                        next_grid_information = add_node_to_grid_info(grid,next_grid_information,node,increase_kappa=False,require_presence=False)
 
-    # Add the tagged virtual reference nodes to the previous grid as virtual finer nodes which are then taken into account when loading all trajs
-    if not grid.major_grid is None:
-        # Read the grid files first to check idx value, and whether no points are already included
-        fname = 'grid{0:0=2d}.txt'.format(n)
-        with open(fname,'r') as f:
-            lines = f.readlines()
-            lines = lines[1:] # skipheader
+                # Rewrite the grid_information file
+                with open(next_grid_name,'w') as f:
+                    f.write('grid,nr,cvs,kappas,type\n')
+                    for gi in next_grid_information:
+                        f.write(",".join([gin.decode() if isinstance(gin,bytes) else str(gin) for gin in list(gi)]) + '\n')
 
-        ids_existing = []
-        locs_existing = []
-        kappas_existing = []
-        for line in lines:
-            identity = int(line.split(',')[1])
-            loc = tuple([float(l) for l in line.split(',')[2].split('*')])
-            kappa = tuple([float(k) for k in line.split(',')[3].split('*')])
-            ids_existing.append(identity)
-            locs_existing.append(loc)
-            kappas_existing.append(kappa)
+    # Second we check whether the current grid information should be updated
+    # The corresponding grid file should exist per definition
+    grid_name = 'grid{0:0=2d}.txt'.format(grid.index)
+    assert os.path.exists(grid_name)
 
-        idx = max(ids_existing) + 1
+    # Read the grid file, everything will be read as a byte string
+    grid_information = np.genfromtxt(grid_name, delimiter=',',dtype=object,skip_header=1,encoding='utf')
+    if grid_information.size==1: # problem with single line files
+        grid_information = np.array([grid_information])
 
-        with open(fname,'a') as f:
-            for node in grid.realized_virtual_reference_nodes:
-                if tuple(node.loc) not in locs_existing:
-                    f.write('{},{},{},{}\n'.format(n,idx,"*".join(['{:.8f}'.format(p) for p in node.loc]),"*".join(['{:.8e}'.format(kappa) for kappa in node.kappas])))
-                    idx += 1
+    # Check all nodes
+    #   grid.nodes contains non deviant nodes and refined reference nodes (which do not need to be considered below)
+    #   if Node and deviant, replace with updated kappa taking max_kappa and growth factor into account
+    #   if Reference node and not refined, replace with updated kappa ...
+    print('Checking current grid {}'.format(grid.index))
+    for node in grid.nodes:
+        if isinstance(node,Node):
+            if node.deviant:
+                #print("Adding deviant node")
+                grid_information = add_node_to_grid_info(grid,grid_information,node,increase_kappa=True,require_presence=True,reason='deviant')
+            else:
+                grid_information = add_node_to_grid_info(grid,grid_information,node,increase_kappa=False,require_presence=True,finalize=True)
+            
+        if isinstance(node,ReferenceNode):
+            if not node.refined:
+                if node.real:
+                    #print("Adding refined reference node")
+                    grid_information = add_node_to_grid_info(grid,grid_information,node,increase_kappa=True,require_presence=True,reason='unrefined reference')
                 else:
-                    print('This node already existed! Skipping ...')
+                    #print('Realizing a virtual node')
+                    grid_information = add_node_to_grid_info(grid,grid_information,node,increase_kappa=False,require_presence=False)
+            else:
+                if node.real:
+                    # Finalize entry
+                    grid_information = add_node_to_grid_info(grid,grid_information,node,increase_kappa=False,require_presence=True,finalize=True)
 
-    # Replace the grid point lines in the previous grids if their confinement was not sufficient
-    nodes_dict = {}
-    for node in grid.deviant_nodes:
-        if node.identity[0] not in nodes_dict:
-            nodes_dict[node.identity[0]] = [node]
-        else:
-            nodes_dict[node.identity[0]].append(node)
-
-    for k,v in nodes_dict.items():
-        with open('grid{0:0=2d}.txt'.format(k),'r') as f:
-            lines = f.readlines()
-        for node in v:
-            lines[node.identity[1]+1] = '{},{},{},{}\n'.format(node.identity[0],node.identity[1],"*".join(['{:.8f}'.format(p) for p in node.loc]),"*".join(['{:.8e}'.format(k) for k in node.kappas]))
-            # Remove deviant trajectory
-            os.remove('trajs/traj_{}_{}.h5'.format(node.identity[0],node.identity[1]))
-
-        with open('grid{0:0=2d}.txt'.format(k),'w') as f:
-            f.writelines(lines)
+    # Rewrite the grid_information file
+    with open(grid_name,'w') as f:
+        f.write('grid,nr,cvs,kappas,type\n')
+        for gi in grid_information:
+            f.write(",".join([gin.decode() if isinstance(gin,bytes) else str(gin) for gin in list(gi)]) + '\n')
 
 
-def plot_grid(n,data,grid):
+def plot_grid(grid):
     fig = pt.figure('grid')
     ax = fig.gca()
     # Plot previous grids
@@ -291,37 +346,42 @@ def plot_grid(n,data,grid):
     # Plot current grid and refinement
     grid_grid = np.array([node.loc for node in grid.nodes])
     if grid_grid.shape[1] == 1:
-        fig.set_size_inches(((n+1)*4,1))
-        ax.scatter(grid_grid[:,0],np.zeros_like(grid_grid[:,0]), s=0.2, color='k')
-        ax.scatter(np.array([node.loc[0] for node in grid.finer_nodes if not node.reference]),
-     np.zeros_like(np.array([node.loc[0] for node in grid.finer_nodes if not node.reference])), s=0.05, color='r')
-        ax.scatter(np.array([node.loc[0] for node in grid.finer_nodes if node.reference]),
-     np.zeros_like(np.array([node.loc[0] for node in grid.finer_nodes if node.reference])), s=0.05, color='b',marker='x', alpha=0.5)
-        ax.scatter(np.array([node.loc[0] for node in grid.deviant_nodes]),
-     np.zeros_like(np.array([node.loc[0] for node in grid.deviant_nodes])), s=5., color='b',marker='x')
-        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real]),
-     np.zeros_like(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real])), s=0.05, color='g', marker='x')
-        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and rnode.to_realize]),
-     np.zeros_like(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and rnode.to_realize])), s=0.05, color='orange', marker='x', alpha=0.5)
-        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and not rnode.to_realize]),
-     np.zeros_like(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and not rnode.to_realize])), s=0.05, color='g', marker='x', alpha=0.5)
-    elif grid_grid.shape[1] == 2:
-        fig.set_size_inches(((n+1)*2,(n+1)*2))
-        ax.scatter(grid_grid[:,0],grid_grid[:,1], s=0.2, color='k')
+        fig.set_size_inches(((grid.index+1)*4,1))
+        ax.scatter(grid_grid[:,0],np.zeros_like(grid_grid[:,0]), s=0.2, color='k', label="Node")
         ax.scatter(np.array([node.loc[0] for node in grid.finer_nodes]),
-                   np.array([node.loc[1] for node in grid.finer_nodes]), s=0.05, color='r')
+     np.zeros_like(np.array([node.loc[0] for node in grid.finer_nodes])), s=0.05, color='r', label="Finer Node")
         ax.scatter(np.array([node.loc[0] for node in grid.deviant_nodes]),
-                   np.array([node.loc[1] for node in grid.deviant_nodes]), s=0.075, color='b', marker='x')
-        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real]),
-                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if not rnode.real]), s=0.05, color='g', marker='x')
-        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and rnode.to_realize]),
-                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if rnode.real and rnode.to_realize]), s=0.05, color='orange', marker='x', alpha=0.5)
-        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and not rnode.to_realize]),
-                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if rnode.real and not rnode.to_realize]), s=0.05, color='g', marker='x', alpha=0.5)
+     np.zeros_like(np.array([node.loc[0] for node in grid.deviant_nodes])), s=5., color='b',marker='x', label="Deviant Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real and rnode.refined]),
+     np.zeros_like(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real and rnode.refined])), s=0.05, color='g', marker='x', label="Virtual Reference Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real and not rnode.refined]),
+     np.zeros_like(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real and not rnode.refined])), s=0.05, color='orange', marker='x', alpha=0.5, label="Unrefined Virtual Reference Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and not rnode.refined]),
+     np.zeros_like(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and not rnode.refined])), s=0.05, color='orange', marker='x', alpha=0.5, label="Unrefined Realized Reference Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and rnode.refined]),
+     np.zeros_like(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and rnode.refined])), s=0.05, color='g', marker='x', alpha=0.5, label="Realized Reference Node")
+    elif grid_grid.shape[1] == 2:
+        fig.set_size_inches(((grid.index+1)*2,(grid.index+1)*2))
+        ax.scatter(grid_grid[:,0],grid_grid[:,1], s=0.2, color='k')
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and rnode.refined]),
+                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if rnode.real and rnode.refined]),        s=0.2, color='g')
+        ax.scatter(np.array([node.loc[0] for node in grid.finer_nodes]),
+                   np.array([node.loc[1] for node in grid.finer_nodes]),                                              s=0.05, color='r', label="Finer Node")
+        ax.scatter(np.array([node.loc[0] for node in grid.nodes if isinstance(node,Node) and node.deviant]),
+                   np.array([node.loc[1] for node in grid.nodes if isinstance(node,Node) and node.deviant]),                                    s=2.0, linewidths=0.5, marker='s', facecolor='none', edgecolor='b', label="Deviant Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real and rnode.refined]),
+                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if not rnode.real and rnode.refined]),    s=0.05, color='g', marker='x', label="Virtual Reference Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if not rnode.real and not rnode.refined]),
+                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if not rnode.real and not rnode.refined]),s=0.05, color='r', marker='x', label="Unrefined Virtual Reference Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and not rnode.refined]),
+                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if rnode.real and not rnode.refined]),    s=2.0, linewidths=0.5, marker='s', facecolor='none', edgecolor='orange', alpha=0.5, label="Unrefined Realized Reference Node")
+        ax.scatter(np.array([rnode.loc[0] for rnode in grid.reference_nodes if rnode.real and rnode.refined]),
+                   np.array([rnode.loc[1] for rnode in grid.reference_nodes if rnode.real and rnode.refined]),        s=2.0, linewidths=0.5, marker='s', facecolor='none', edgecolor='g', alpha=0.5, label="Realized Reference Node")
     else:
         pt.close('grid')
 
-    fig.savefig('grid_points_{}.pdf'.format(n),bbox_inches='tight')
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+    fig.savefig('grid_points_{}.pdf'.format(grid.index),bbox_inches='tight')
     pt.close('grid')
 
 def write_fes(data,grid,fes,index,suffix=None,fes_err=None):
@@ -391,8 +451,8 @@ def cut_edges(data,grid):
     edges = data['edges']
     spacings = data['spacings']
     for i,_ in enumerate(spacings):
-        grid.finer_nodes = [node for node in grid.finer_nodes if node.loc[i] < edges['max'][i]+spacings[i] and node.loc[i] > edges['min'][i]-spacings[i]]
-        grid.reference_nodes = [rnode for rnode in grid.reference_nodes if rnode.loc[i] < edges['max'][i]+spacings[i] and rnode.loc[i] > edges['min'][i]-spacings[i]]
+        grid.finer_nodes = [node for node in grid.finer_nodes if node.loc[i] <= edges['max'][i]+precision and node.loc[i] >= edges['min'][i]-precision]
+        grid.reference_nodes = [rnode for rnode in grid.reference_nodes if rnode.loc[i] <= edges['max'][i]+precision and rnode.loc[i] >= edges['min'][i]-precision]
 
 
 def write_colvars(filename,rtrajs,rgrids,rkappas,verbose=True):

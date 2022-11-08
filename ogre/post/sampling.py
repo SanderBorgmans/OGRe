@@ -10,21 +10,21 @@ from ogre.input.utils import get_cv_units
 # The grid is defined in terms of 'cv_units' to avoid conversion errors
 # Some quantities/constants are defined in sampling_utils.py
 
-def scatter(ax,grid,n,size=1):
+def scatter(ax,grid,n,size=1,labels=False):
     real_grid = np.array([node.loc for node in grid if isinstance(node,Node)])
-    reference_grid_real = np.array([node.loc for node in grid if isinstance(node,ReferenceNode) and node.real and not node.updated])
-    reference_grid_real_updated = np.array([node.loc for node in grid if isinstance(node,ReferenceNode) and node.real and node.updated])
+    reference_grid_real = np.array([node.loc for node in grid if isinstance(node,ReferenceNode) and node.real and not node.refined])
+    reference_grid_real_refined = np.array([node.loc for node in grid if isinstance(node,ReferenceNode) and node.real and node.refined])
     reference_grid_virtual = np.array([node.loc for node in grid if isinstance(node,ReferenceNode) and not node.real])
     if real_grid.shape[1] == 1:
-        if real_grid.size > 0: ax.scatter(real_grid[:,0],np.zeros_like(real_grid[:,0]), s=0.3*size, c=colors[n])
-        if reference_grid_real.size > 0: ax.scatter(reference_grid_real[:,0],np.zeros_like(reference_grid_real[:,0]), s=0.75*size, c=colors[n], marker='s')
-        if reference_grid_real_updated.size > 0: ax.scatter(reference_grid_real_updated[:,0],np.zeros_like(reference_grid_real_updated[:,0]), s=0.75*size, c=colors[n], marker='D')
-        if reference_grid_virtual.size > 0: ax.scatter(reference_grid_virtual[:,0],np.zeros_like(reference_grid_virtual[:,0]), s=0.7*size, c=colors[n], marker='v')
+        if real_grid.size > 0: ax.scatter(real_grid[:,0],np.zeros_like(real_grid[:,0]), s=0.3*size, c=colors[n], label="Node" if labels else None)
+        if reference_grid_real.size > 0: ax.scatter(reference_grid_real[:,0],np.zeros_like(reference_grid_real[:,0]), s=0.75*size, c=colors[n-1], marker='s', label="Unrefined Reference Node" if labels else None)
+        if reference_grid_real_refined.size > 0: ax.scatter(reference_grid_real_refined[:,0],np.zeros_like(reference_grid_real_refined[:,0]), s=0.75*size, c=colors[n-1], marker='D', label="Realized Reference Node" if labels else None)
+        if reference_grid_virtual.size > 0: ax.scatter(reference_grid_virtual[:,0],np.zeros_like(reference_grid_virtual[:,0]), s=0.7*size, c=colors[n-1], marker='+', label="Virtual Reference Node" if labels else None)
     elif real_grid.shape[1] == 2:
-        if real_grid.size > 0: ax.scatter(real_grid[:,0],real_grid[:,1], s=0.3*size, c=colors[n])
-        if reference_grid_real.size > 0: ax.scatter(reference_grid_real[:,0],reference_grid_real[:,1], s=0.75*size, c=colors[n], marker='s')
-        if reference_grid_real_updated.size > 0: ax.scatter(reference_grid_real_updated[:,0],reference_grid_real_updated[:,1], s=0.75*size, c=colors[n], marker='D')
-        if reference_grid_virtual.size > 0: ax.scatter(reference_grid_virtual[:,0],reference_grid_virtual[:,1], s=0.7*size, c=colors[n], marker='v')
+        if real_grid.size > 0: ax.scatter(real_grid[:,0],real_grid[:,1], s=0.3*size, c=colors[n], label="Node" if labels else None)
+        if reference_grid_real.size > 0: ax.scatter(reference_grid_real[:,0],reference_grid_real[:,1], s=0.75*size, c=colors[n-1], marker='s', label="Unrefined Reference Node" if labels else None)
+        if reference_grid_real_refined.size > 0: ax.scatter(reference_grid_real_refined[:,0],reference_grid_real_refined[:,1], s=1.25*size, c=colors[n-1], marker='D', label="Realized Reference Node" if labels else None)
+        if reference_grid_virtual.size > 0: ax.scatter(reference_grid_virtual[:,0],reference_grid_virtual[:,1], s=0.7*size, c=colors[n-1], marker='+', label="Virtual Reference Node" if labels else None)
 
 
 def plot_ref_grid(ax,grid,size=1.):
@@ -35,16 +35,23 @@ def plot_ref_grid(ax,grid,size=1.):
         tmp = tmp.major_grid
     for n,tmpn in enumerate(tmp_nodes[::-1]):
         scatter(ax,tmpn,n,size=size*0.25)
-    scatter(ax,grid.nodes,len(tmp_nodes),size=size)
+    scatter(ax,grid.nodes,len(tmp_nodes),size=size,labels=True) # add labels for the final scatter
 
 
-def create_grid(index,grid,trajs,kappas,identities,data,major_grid=None):
+def get_node_from_nodes(tree,point):
+    found,index = find_node_index(tree,point)
+    if found: return index
+
+def create_grid(index,grid,trajs,kappas,identities,types,data,major_grid=None):
     """
         This function returns a Grid object based on the grid points and the trajectories it receives
         The grid points should be defined on a single distance scale (for each refinement a different grid should be defined)
         * Arguments
             grid            NxD array with all grid points
             trajs           NxMxD array with trajectory of M steps for every grid point
+            kappas          NxD array with all kappa values
+            identities      list with N entries, with the identity of each grid point
+            types           list with N entries, the type of that grid point
             data            The yaml data file
             major_grid      The previous grid object, containing all previous information
     """
@@ -63,43 +70,40 @@ def create_grid(index,grid,trajs,kappas,identities,data,major_grid=None):
     print(steps)
     if any(steps/2.<precision): raise ValueError('Making another refinement would require increasing DECIMALS. Adapt this in the sampling_utils.py file.')
 
-    if not major_grid is None:
-        # Find those simulations that correspond to to_realize reference nodes which are now realized
-        realized_virtual_reference_nodes = {n:rn for n,rn in enumerate(major_grid.reference_nodes) if rn.to_realize}
-        tvrn = len(realized_virtual_reference_nodes)>0
+    # Create a KDTree with the reference nodes, to update them
+    ref_tree = None
+    if major_grid is not None:
+        ref_tree = KDTree(np.asarray([node.loc for node in major_grid.reference_nodes]))
 
-        # Find those simulations that correspond to refined real reference nodes
-        refined_real_reference_nodes = [fn for fn in major_grid.finer_nodes if fn.reference]
-        rrrn = len(refined_real_reference_nodes)>0
-
-        if tvrn:
-            tree_tvrn = KDTree(np.asarray([node.loc for node in realized_virtual_reference_nodes.values()]))
-            indices_tvrn = list(realized_virtual_reference_nodes.keys())
-
-        if rrrn:
-            tree_rrrn = KDTree(np.asarray([node.loc for node in refined_real_reference_nodes]))
-
-        for n,point in enumerate(grid):
-            condition_tvrn,idx_tvrn = find_node_index(tree_tvrn,point) if tvrn else (False,0)
-            condition_rrrn,idx_rrrn = find_node_index(tree_rrrn,point) if rrrn else (False,0)
-
-            if condition_tvrn:
-                # If the new point corresponds to a realized reference node, adapt it and replace it in the major grid reference nodes
-                major_grid.reference_nodes[indices_tvrn[idx_tvrn]] = ReferenceNode(point,[Node(point,trajs[n],kappas[n],identities[n])],real=True)
-            elif condition_rrrn:
-                # If the new point corresponds to refined real reference node add it to the reference nodes of the major grid
-                major_grid.reference_nodes.append(ReferenceNode(point,[Node(point,trajs[n],kappas[n],identities[n])],real=True,updated=True))
-            else:
-                # Else just add the point
-                nodes.append(Node(point,trajs[n],kappas[n],identities[n]))
-    else:
-        for n,point in enumerate(grid):
+    for n,point in enumerate(grid):
+        if types[n] in ['node','new_node','deviant_node']:
+            # the sanity of deviant nodes will be checked later
             nodes.append(Node(point,trajs[n],kappas[n],identities[n]))
+        elif types[n] in ['reference_node','unrefined_reference_node','unrefined_virtual_reference_node']: 
+            # this requires a major grid, and it should exist by definition if reference nodes are present
+            assert major_grid is not None
+            
+            # identify the simulation with a node from the major_grid reference_nodes and replace it independent of the type
+            rn_idx = get_node_from_nodes(ref_tree,point)
+
+            # assume everything is fine
+            rn_tmp = ReferenceNode(point,[Node(point,trajs[n],kappas[n],identities[n])],real=True,refined=True)
+
+            if types[n] == 'reference_node':
+                # this is a refined reference node which can just be added
+                pass
+            elif types[n] in ['unrefined_reference_node','unrefined_virtual_reference_node']:
+                # check whether the simulation is now confined
+                confinement = major_grid.traj_confinement(rn_tmp,data,factor=2.) # by choosing a factor 2 we are effectively checking the confinement for the current grid
+                rn_tmp.refined = confinement>=major_grid.CONFINEMENT_THR # set the refined state
+            else:
+                raise ValueError('How did I get here?')
+            
+            major_grid.reference_nodes[rn_idx] = rn_tmp
 
     # Add the reference grid points to the grid
     if not major_grid is None:
         for node in major_grid.reference_nodes:
-            #print("Check: ", node.loc, node.kappas, node.nodes, node.realize, node.real)
             nodes.append(node)
 
     # Assign constants from data or assing default values
@@ -109,7 +113,7 @@ def create_grid(index,grid,trajs,kappas,identities,data,major_grid=None):
     KAPPA_GROWTH_FACTOR = data['KAPPA_GROWTH_FACTOR'] if 'KAPPA_GROWTH_FACTOR' in data else 2.
     MAX_KAPPA           = data['MAX_KAPPA']           if 'MAX_KAPPA'           in data else None
 
-    return Grid(major_grid,nodes,edges,steps,RUN_UP_TIME,CONFINEMENT_THR,OVERLAP_THR,KAPPA_GROWTH_FACTOR,MAX_KAPPA=MAX_KAPPA)
+    return Grid(index,major_grid,nodes,edges,steps,RUN_UP_TIME,CONFINEMENT_THR,OVERLAP_THR,KAPPA_GROWTH_FACTOR,MAX_KAPPA=MAX_KAPPA)
 
 
 class Node(object):
@@ -120,59 +124,76 @@ class Node(object):
         self.identity = identity
         self.neighbours = []
         self.extreme_kappa = False
+        self.deviant = False # True corresponds to not refined
+        self._type = None
 
     def set_extreme_kappa(self,MAX_KAPPA,KAPPA_GROWTH_FACTOR):
         if np.any(MAX_KAPPA<self.kappas*KAPPA_GROWTH_FACTOR):
             self.extreme_kappa = True
 
+    @property
+    def type(self):
+        self._type = 'node' if not self.deviant else 'deviant_node'
+        return self._type
+
+
 class FinerNode(object):
-    def __init__(self, loc, kappas, deviant, KAPPA_GROWTH_FACTOR, MAX_KAPPA=None, identity=None, reference=False):
+    def __init__(self, loc, kappas, MAX_KAPPA=None, identity=None):
         self.loc = loc
-        self.reference = reference # this will be True if this FinerNode corresponds to a real ReferenceNode that requires refinement
-        if deviant:
-            self.kappas = np.clip(kappas * KAPPA_GROWTH_FACTOR, 0, MAX_KAPPA if MAX_KAPPA is not None else np.inf)
-            self.identity = identity # to identify grid point such that it is overwritten
-        else:
-            self.kappas = kappas
-            self.identity = identity
+        self.kappas = np.clip(kappas, 0, MAX_KAPPA if MAX_KAPPA is not None else np.inf)
+        self.identity = identity
+        self._type = None
+
+    @property
+    def type(self):
+        self._type = 'new_node'
+        return self._type
+        
 
 class ReferenceNode(object):
-    def __init__(self, loc, nodes, real=False, updated=False):
-        self.loc = loc # np.mean([node.loc for node in nodes],axis=0) this becomes faulty at the fringe!
+    def __init__(self, loc, nodes, real=False, refined=False):
+        self.loc = loc
         self.nodes = nodes
         self.trajs = [traj for node in self.nodes for traj in node.trajs]
         self.kappas = np.max([node.kappas for node in self.nodes],axis=0)
         self.neighbours = []
         self.real = real
-        self.updated = updated # This is true when a FinerNode is created from a real Reference node since it was not confined enough for the next iteration
-        self.to_realize = False # this is True when a Reference node can no longer be represented by surrounding nodes and a trajectory has to be calculated for this point in the next iteration
+        self.refined = refined # either True or False, True when the Reference Node is ready to be compared with
+        # when a virtual Reference Node needs to be refined it will be realized first, after which it will then be refined
+        # as we assume that that Reference node can no longer be represented by surrounding nodes and a trajectory has to be calculated for this point in the next iteration
+        self._type = None
 
-    def set_realize(self, kappas):
-        # the realize attribute can only be altered through this function to ensure that the correct kappa values are assigned
-        self.to_realize = True
+    def realize(self,kappas):
+        assert not self.real
         self.kappas = kappas
+        self.refined = False
 
-    def update_node(self,node):
-        """
-            Check if the 'node' is already part of this Reference node, if so, update it
-        """
-        diff = np.linalg.norm(np.array([node.loc - n.loc for n in self.nodes]),axis=-1)
-        if np.min(diff) < precision:
-            self.nodes[np.argmin(diff)] = node
-            self.trajs = [traj for node in self.nodes for traj in node.trajs]
+    def refine(self,KAPPA_GROWTH_FACTOR,MAX_KAPPA):
+        self.kappas =  np.clip(self.kappas * KAPPA_GROWTH_FACTOR, 0, MAX_KAPPA if MAX_KAPPA is not None else np.inf)
+        self.refined = False
+
+    @property
+    def type(self):
+        if self.real:
+            if self.refined: self._type = 'reference_node'
+            else: self._type = 'unrefined_reference_node'
+        else:
+            if self.refined: self._type = 'virtual reference_node'
+            else: self._type = 'unrefined_virtual_reference_node'  
+        return self._type
 
 
 class Grid(object):
-    def __init__(self, major_grid, nodes, edges, steps, RUN_UP_TIME, CONFINEMENT_THR, OVERLAP_THR, KAPPA_GROWTH_FACTOR,MAX_KAPPA=None):
+    def __init__(self, index, major_grid, nodes, edges, steps, RUN_UP_TIME, CONFINEMENT_THR, OVERLAP_THR, KAPPA_GROWTH_FACTOR,MAX_KAPPA=None):
+        self.index = index
         self.major_grid = major_grid
-        self.nodes = nodes # these are the nodes/referencenodes that contain trajectories
+        self.nodes = nodes # these are the nodes/reference nodes that contain trajectories
         self.edges = edges
         self.steps = steps
         self.finer_nodes = [] # this will be calculated
         self.reference_nodes = [] # this will be calculated
         self.deviant_nodes = [] # this will be calculated
         self.realized_virtual_reference_nodes = [] # this will be calculated
-        self.deviant = None
         self.overlap = None
         # CONSTANTS
         self.RUN_UP_TIME = RUN_UP_TIME
@@ -276,7 +297,6 @@ class Grid(object):
         # Assign al nearest neighbours
         self.characterize_nodes()
 
-        self.deviant = np.zeros(len(self.nodes), dtype=bool) # default no deviants
         self.overlap = np.ones((len(self.nodes),2*len(self.steps)), dtype=bool) # default everything overlaps
 
         if len(data['spacings']) == 1:
@@ -298,7 +318,8 @@ class Grid(object):
                 confinement = self.traj_confinement(node,data)
                 # If the simulation went out of bounds, the overlap loses all meaning at this location
                 if confinement < self.CONFINEMENT_THR:
-                    self.deviant[n] = True
+                    ##self.deviant[n] = True
+                    node.deviant = True
                     if len(node.loc)==1:
                         ax.scatter(node.loc[0],0., s=5., color='b', marker='x')
                     elif len(node.loc)==2:
@@ -316,30 +337,30 @@ class Grid(object):
                          ax.plot((node.loc[0],self.nodes[neighbour].loc[0]),
                                  (node.loc[1],self.nodes[neighbour].loc[1]), linestyle=':' ,color='gray', lw=0.3)
                  # Only consider overlap if this node is not deviant (else overlap loses meaning)
-                if not self.deviant[n]:
+                if not node.deviant:
                     self.overlap[n,:len(node.neighbours)] = False # initialize all neighbouring overlap values to be faulty
                     for m,neighbour in enumerate(node.neighbours):
                         # Make a distinction between real and virtual ReferenceNodes and other Nodes
                         # - If the node is a virtual reference node and the overlap is faulty we should perform a simulation at that location instead
-                        # - If the node is a real reference node we can immediately compare as this node can not be deviant by definition
+                        # - If the node is a real reference node we should also check whether the Node it was based was not deviant (it might still be refined)
                         # - If the node is another node we should check whether it is deviant before comparing
-                        if isinstance(self.nodes[neighbour],ReferenceNode) and not self.nodes[neighbour].real:
+                        if isinstance(self.nodes[neighbour],ReferenceNode) and self.nodes[neighbour].refined and not self.nodes[neighbour].real:
                             overlap = self.NNoverlap(node, self.nodes[neighbour], data)>=self.OVERLAP_THR
                             if not overlap:
-                                # Check if this node was already set to realize to avoid adding multiple times
-                                if not self.nodes[neighbour].to_realize:
-                                    self.nodes[neighbour].set_realize(node.kappas)
-                                    self.realized_virtual_reference_nodes.append(self.nodes[neighbour])
-                                    if len(node.loc)==1:
-                                        ax.plot((node.loc[0],self.nodes[neighbour].loc[0]), (0,0) , color='orange', lw=0.3)
-                                    elif len(node.loc)==2:
-                                        ax.plot((node.loc[0],self.nodes[neighbour].loc[0]),
-                                                (node.loc[1],self.nodes[neighbour].loc[1]) , color='orange', lw=0.3)
-                            self.overlap[n,m] = False
+                                # As we assume virtual Reference Nodes are initially sane, a faulty overlap check will result in a realization and later refinement
+                                self.nodes[neighbour].realize(node.kappas)
+                                if len(node.loc)==1:
+                                    ax.plot((node.loc[0],self.nodes[neighbour].loc[0]), (0,0) , color='orange', lw=0.3)
+                                elif len(node.loc)==2:
+                                    ax.plot((node.loc[0],self.nodes[neighbour].loc[0]),
+                                            (node.loc[1],self.nodes[neighbour].loc[1]) , color='orange', lw=0.3)
+                            self.overlap[n,m] = True
 
-                        elif (isinstance(self.nodes[neighbour],ReferenceNode) and self.nodes[neighbour].real) or not self.deviant[neighbour]:
+                        elif isinstance(self.nodes[neighbour],ReferenceNode) and self.nodes[neighbour].refined and self.nodes[neighbour].real:
                             self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour], data)>=self.OVERLAP_THR
-
+                        
+                        elif isinstance(self.nodes[neighbour],Node) and not self.nodes[neighbour].deviant:
+                            self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour], data)>=self.OVERLAP_THR
                         else:
                             self.overlap[n,m] = True
 
@@ -350,171 +371,172 @@ class Grid(object):
                                 ax.plot((node.loc[0],self.nodes[neighbour].loc[0]),
                                         (node.loc[1],self.nodes[neighbour].loc[1]), color='r', lw=0.3)
 
-
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         fig.savefig('overlap_{}.pdf'.format(index),bbox_inches='tight')
 
-    def refine_grid_nodes(self,deviant):
-        if deviant:
-            # If we are dealing with deviant nodes, just create a new node with increased KAPPA
-            idx = np.where(self.deviant)[0]
-            deviant_nodes = [FinerNode(self.nodes[i].loc,self.nodes[i].kappas,deviant,self.KAPPA_GROWTH_FACTOR, MAX_KAPPA=self.MAX_KAPPA, identity=self.nodes[i].identity) for i in idx]
-            return deviant_nodes
-        else:
-            # Else create a grid of finer and reference nodes for overlap refinement
-            # Create set of unique node pairs where overlap is faulty
-            overlap_pairs = np.array(np.where(self.overlap==0)).T  # with transpose the shape is (N,2)
-            # Convert node and neighbour number to node numbers
-            overlap_pairs = list(set([tuple(sorted([pair[0],self.nodes[pair[0]].neighbours[pair[1]]])) for pair in overlap_pairs]))
+    def refine_grid_nodes(self):
+        # Create a grid of finer and reference nodes for overlap refinement
+        # Create set of unique node pairs where overlap is faulty
+        overlap_pairs = np.array(np.where(self.overlap==0)).T  # with transpose the shape is (N,2)
+        # Convert node and neighbour number to node numbers
+        overlap_pairs = list(set([tuple(sorted([pair[0],self.nodes[pair[0]].neighbours[pair[1]]])) for pair in overlap_pairs]))
 
-            dims = (2*(len(self.steps)-1),                       # half step in each other direction
-                    2*(len(self.steps)-1) * 2*len(self.steps))   # half step in each direction for every point in fine grid except halfway point
+        dims = (2*(len(self.steps)-1),                       # half step in each other direction
+                2*(len(self.steps)-1) * 2*len(self.steps))   # half step in each direction for every point in fine grid except halfway point
 
-            m_steps = np.diag(self.steps)
+        m_steps = np.diag(self.steps)
 
-            # Construct finer grid using half the previous step size in the direction of the faulty overlap
-            kappas            = np.zeros((len(overlap_pairs), 1+dims[0], len(self.steps)))
-            finer_grid        = np.zeros((len(overlap_pairs), 1+dims[0], len(self.steps)))
-            if dims[0]>0:
-                reference_grid  = np.zeros((len(overlap_pairs), dims[1], len(self.steps))) # these reference points do not correspond to actual grid points
-            reference_grid_real = np.zeros((len(overlap_pairs),       2, len(self.steps))) # these are exactly the points between which the overlap was faulty
+        # Construct finer grid using half the previous step size in the direction of the faulty overlap
+        kappas            = np.zeros((len(overlap_pairs), 1+dims[0], len(self.steps)))
+        finer_grid        = np.zeros((len(overlap_pairs), 1+dims[0], len(self.steps)))
+        if dims[0]>0:
+            reference_grid  = np.zeros((len(overlap_pairs), dims[1], len(self.steps))) # these reference points do not correspond to actual grid points
+        reference_grid_real = np.zeros((len(overlap_pairs),       2, len(self.steps))) # these are exactly the points between which the overlap was faulty
 
-            for n,(i,j) in enumerate(overlap_pairs):
-                # Take max of fully confined node kappas for the new finer nodes
-                if isinstance(self.nodes[j],ReferenceNode):
-                    kappas[n,:] = self.nodes[i].kappas
-                else:
-                    kappas[n,:] = np.max(np.array([self.nodes[i].kappas, self.nodes[j].kappas]),axis=0)
-
-                # Determine direction of faulty overlap
-                diff = np.abs(self.nodes[i].loc - self.nodes[j].loc)
-                od = np.argmax(diff)
-                reduced_m_steps = np.delete(m_steps,od,0)
-                try:
-                    assert np.sum(np.hstack((diff[:od],diff[od+1:])))<precision
-                except AssertionError:
-                    raise AssertionError('A problem occured when trying to define the overlap direction.')
-
-
-                # Construct finer grid
-                finer_grid[n,0] = 0.5*(self.nodes[i].loc + self.nodes[j].loc) # halfway point
-                if dims[0]>0:
-                    finer_grid[n,1:] = finer_grid[n,0] + np.array([k*vec for k in [-0.5,0.5] for vec in reduced_m_steps]) # halfway step in every other direction
-
-                # Construct real reference grid
-                reference_grid_real[n][0] = self.nodes[i].loc
-                reference_grid_real[n][1] = self.nodes[j].loc
-
-                # Construct virtual reference_grid
-                if dims[1]>0:
-                    reference_grid[n]  = np.array([fn + k*vec for fn in finer_grid[n,1:] for k in (-0.5,0.5) for vec in m_steps])
-
-            kappas = kappas.reshape((-1,len(self.steps)))
-            finer_grid = finer_grid.reshape((-1,len(self.steps)))
-            if dims[0]>0:
-                reference_grid = reference_grid.reshape((-1,len(self.steps)))
-            reference_grid_real = reference_grid_real.reshape((-1,len(self.steps)))
-
-
-            # Remove duplicate finer grid points, and store the corresponding kappa values
-            mask = make_unique(self.steps/2.,finer_grid.reshape((-1,len(self.steps))),get_mask=True)
-            finer_grid = np.round(finer_grid[mask],DECIMALS)
-            kappas = kappas[mask]
-
-            # Remove duplicate reference grid points
-            if dims[1]>0:
-                reference_grid  = np.round(make_unique(self.steps/2.,reference_grid),DECIMALS)
-            reference_grid_real = np.round(make_unique(self.steps/2.,reference_grid_real),DECIMALS)
-
-            # Remove reference grid points that correspond to finer grid points constructed above
-            if dims[1]>0:
-                reference_grid  = make_unique_between(self.steps/2.,finer_grid,reference_grid)
-            reference_grid_real = make_unique_between(self.steps/2.,finer_grid,reference_grid_real) # Remove reference grid points that correspond to finer grid points constructed above\
-
-
-            # Sort all the grids according to cvs
-            ind = np.lexsort(finer_grid[:,::-1].T) # Sort by first column, then second column, ...
-            finer_grid = finer_grid[ind]
-
-            if dims[1]>0:
-                ind = np.lexsort(reference_grid[:,::-1].T) # Sort by first column, then second column, ...
-                reference_grid = reference_grid[ind]
-
-            ind = np.lexsort(reference_grid_real[:,::-1].T) # Sort by first column, then second column, ...
-            reference_grid_real = reference_grid_real[ind]
-
-            # Convert to Nodes
-            finer_nodes = []
-            reference_nodes = []
-
-            # Convert finer_grid points into FinerNodes
-            finer_nodes = [FinerNode(point,kappas[n],deviant,self.KAPPA_GROWTH_FACTOR, MAX_KAPPA=self.MAX_KAPPA) for n,point in enumerate(finer_grid)]
-
-            # Convert reference grid points to reference grid nodes
-            if not self.major_grid is None:
-                nodes = self.nodes + self.major_grid.nodes
+        for n,(i,j) in enumerate(overlap_pairs):
+            # Take max of fully confined node kappas for the new finer nodes
+            if isinstance(self.nodes[j],ReferenceNode):
+                kappas[n,:] = self.nodes[i].kappas
             else:
-                nodes = self.nodes
-            tree = KDTree(np.array([node.loc for node in nodes]))
+                kappas[n,:] = np.max(np.array([self.nodes[i].kappas, self.nodes[j].kappas]),axis=0)
 
-            # Add reference nodes to reference grid attribute
-            # Check confinement of the reference nodes in new grid, if too low the overlap with them will never be good, calculate them too, except if they are already being refined!
-            for node in reference_grid_real:
-                ds,idx = tree.query(node,1) # find this point in grid
-                if ds<10*precision:
-                    if idx in np.where(self.deviant)[0]:
-                        # If this real reference node is deviant, we can not use it compare overlap with
-                        # It will be refined in the next iteration and will be taken into account when it is no longer deviant
-                        continue
-                    else:
-                        rn = ReferenceNode(node,[nodes[idx]], real=True)
-                        con = self.traj_confinement(rn,factor=2.)
-                        if con<self.CONFINEMENT_THR:
-                            # If this real reference node is no longer confined enough for the next iteration, make this a finer node with increased kappa (so that both node and finer node are retained)
-                            # This node should thus not be added to the reference nodes, as only the newly calculated node can serve as a reference from this grid on.
-                            finer_nodes.append(FinerNode(nodes[idx].loc,nodes[idx].kappas,True,self.KAPPA_GROWTH_FACTOR,MAX_KAPPA=self.MAX_KAPPA,reference=True))
-                        else:
-                            reference_nodes.append(rn)
+            # Determine direction of faulty overlap
+            diff = np.abs(self.nodes[i].loc - self.nodes[j].loc)
+            od = np.argmax(diff)
+            reduced_m_steps = np.delete(m_steps,od,0)
+            try:
+                assert np.sum(np.hstack((diff[:od],diff[od+1:])))<precision
+            except AssertionError:
+                raise AssertionError('A problem occured when trying to define the overlap direction.')
 
+
+            # Construct finer grid
+            finer_grid[n,0] = 0.5*(self.nodes[i].loc + self.nodes[j].loc) # halfway point
+            if dims[0]>0:
+                finer_grid[n,1:] = finer_grid[n,0] + np.array([k*vec for k in [-0.5,0.5] for vec in reduced_m_steps]) # halfway step in every other direction
+
+            # Construct real reference grid
+            reference_grid_real[n][0] = self.nodes[i].loc
+            reference_grid_real[n][1] = self.nodes[j].loc
+
+            # Construct virtual reference_grid
             if dims[1]>0:
-                for node in reference_grid:
-                    ds,idx = tree.query(node,2) # find two closest neighbours
-                    rnodes = idx[ds-ds[0]<precision] # check if they fall inside the grid precision
-                    # Should we add both nodes? What if one is already a reference node with multiple trajs?
-                    # Identical trajs will be present, but in ratio that corresponds to relative distance.
-                    rn = ReferenceNode(node,[nodes[rnode] for rnode in rnodes])
+                reference_grid[n]  = np.array([fn + k*vec for fn in finer_grid[n,1:] for k in (-0.5,0.5) for vec in m_steps])
+
+        kappas = kappas.reshape((-1,len(self.steps)))
+        finer_grid = finer_grid.reshape((-1,len(self.steps)))
+        if dims[0]>0:
+            reference_grid = reference_grid.reshape((-1,len(self.steps)))
+        reference_grid_real = reference_grid_real.reshape((-1,len(self.steps)))
+
+
+        # Remove duplicate finer grid points, and store the corresponding kappa values
+        mask = make_unique(self.steps/2.,finer_grid.reshape((-1,len(self.steps))),get_mask=True)
+        finer_grid = np.round(finer_grid[mask],DECIMALS)
+        kappas = kappas[mask]
+
+        # Remove duplicate reference grid points
+        if dims[1]>0:
+            reference_grid  = np.round(make_unique(self.steps/2.,reference_grid),DECIMALS)
+        reference_grid_real = np.round(make_unique(self.steps/2.,reference_grid_real),DECIMALS)
+
+        # Remove reference grid points that correspond to finer grid points constructed above
+        if dims[1]>0:
+            reference_grid  = make_unique_between(self.steps/2.,finer_grid,reference_grid)
+        reference_grid_real = make_unique_between(self.steps/2.,finer_grid,reference_grid_real) # Remove reference grid points that correspond to finer grid points constructed above\
+
+
+        # Sort all the grids according to cvs
+        ind = np.lexsort(finer_grid[:,::-1].T) # Sort by first column, then second column, ...
+        finer_grid = finer_grid[ind]
+
+        if dims[1]>0:
+            ind = np.lexsort(reference_grid[:,::-1].T) # Sort by first column, then second column, ...
+            reference_grid = reference_grid[ind]
+
+        ind = np.lexsort(reference_grid_real[:,::-1].T) # Sort by first column, then second column, ...
+        reference_grid_real = reference_grid_real[ind]
+
+        # Convert to Nodes
+        finer_nodes = []
+        reference_nodes = []
+
+        # Convert finer_grid points into FinerNodes
+        finer_nodes = [FinerNode(point,kappas[n],MAX_KAPPA=self.MAX_KAPPA) for n,point in enumerate(finer_grid)]
+
+        # Convert reference grid points to reference grid nodes
+        if not self.major_grid is None:
+            nodes = self.nodes + self.major_grid.nodes
+        else:
+            nodes = self.nodes
+
+        tree = KDTree(np.array([node.loc for node in nodes]))
+
+        # Add reference nodes to reference grid attribute
+        # Check confinement of the reference nodes in new grid, if too low the overlap with them will never be good, calculate them too, except if they are already being refined!
+        for node in reference_grid_real:
+            ds,idx = tree.query(node,1) # find this point in grid
+            if ds<10*precision:
+                if isinstance(nodes[idx],Node) and nodes[idx].deviant:
+                    # If this is a Node and it is deviant, we should wait to add it as a reference node
+                    # since it does not make sense to test the overlap, and we do not want to start refining it already for the next grid
+                    # It will be refined in the next iteration and will be taken into account when it is no longer deviant
+                    #print("Not creating real reference node at {} because the trajectory data from {} is deviant.".format(node, nodes[idx].identity))
+                    continue
+
+                # Create a reference Node object, and check whether it is refined or should be refined
+                rn = ReferenceNode(node, [nodes[idx]], real=True, refined=True)
+                if self.traj_confinement(rn,factor=2.)<self.CONFINEMENT_THR:
+                    rn.refine(self.KAPPA_GROWTH_FACTOR,self.MAX_KAPPA)
+                reference_nodes.append(rn)
+
+
+        if dims[1]>0:
+            for node in reference_grid:
+                ds,idx = tree.query(node,2) # find two closest neighbours
+                neighbour_nodes = idx[(ds-ds[0])<precision] # check if they both fall inside the grid precision
+
+                # Check whether the neighbouring nodes are sane and refined, if not, it does not make sense to create a reference yet
+                # since we dont want to start a realization and refinement proces. It will be generated at a later instance
+                include = True
+                for nnode in neighbour_nodes:
+                    if isinstance(nodes[nnode],Node) and nodes[nnode].deviant:
+                        #print("Not creating virtual reference node at {} because the trajectory data from {} is deviant.".format(node, nodes[nnode].identity))
+                        include = False
+                        continue
+                    if isinstance(nodes[nnode],ReferenceNode) and not nodes[nnode].refined:
+                        #print("Not creating virtual reference node at {} because the reference trajectory data at {} is not refined.".format(node, nodes[nnode].loc))
+                        include = False
+                        continue
+
+                # Caveat, virtual reference nodes will take trajectories of nodes, if a real reference node at that position would require refining (with the smaller cell size)
+                # this virtual node will still be considered sane?    
+                if include:
+                    rn = ReferenceNode(node,[nodes[nnode] for nnode in neighbour_nodes], refined=True) # creates a virtual reference node, assume it is OK, it will get realized if not OK in overlap check
                     reference_nodes.append(rn)
 
-            return finer_nodes, reference_nodes
+        return finer_nodes, reference_nodes
 
 
-    def refine_grid(self):
+    def refine_grid(self,verbose=False):
         """
             Make finer grid based on overlap heuristic and refine grid points for confinement.
             This also identifies a list of reference grid points required for this grid.
         """
-        assert self.deviant is not None
         assert self.overlap is not None
-
-        # Consider all points with a deviating trajectory to refine their confinement
-        if np.sum(self.deviant) > 0:
-            deviant_nodes = self.refine_grid_nodes(True)
-        else:
-            deviant_nodes = []
-
-        self.deviant_nodes = deviant_nodes # the corresponding deviating trajectory files will automatically be removed in grid_utils.write_grid()
 
         # Consider all points with no overlap for the finer grid
         if np.sum(1-self.overlap) > 0:
-            finer_nodes, reference_nodes = self.refine_grid_nodes(False)
+            finer_nodes, reference_nodes = self.refine_grid_nodes()
         else:
             finer_nodes, reference_nodes = [], []
 
         self.finer_nodes     = finer_nodes
         self.reference_nodes = reference_nodes
 
-        print('extreme_kappa:', [[l for l in n.loc] for n in self.nodes if isinstance(n,Node) and n.extreme_kappa])
-        print('fine:', [[l for l in n.loc] for n in self.finer_nodes])
-        print('ref:', [[l for l in n.loc] for n in self.reference_nodes])
-        print('deviant:', [[l for l in n.loc] for n in self.deviant_nodes])
-        print('realized_ref:', [[l for l in n.loc] for n in self.realized_virtual_reference_nodes])
-        
+        if verbose:
+            print('extreme_kappa:', [[l for l in n.loc] for n in self.nodes if isinstance(n,Node) and n.extreme_kappa])
+            print('fine:', [[l for l in n.loc] for n in self.finer_nodes])
+            print('ref:', [[l for l in n.loc] for n in self.reference_nodes])
+            print('unrefined ref:', [[l for l in n.loc] for n in self.reference_nodes if not n.refined])
+            

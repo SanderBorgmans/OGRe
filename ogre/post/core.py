@@ -1,5 +1,5 @@
 #! /usr/bin/python
-import os,sys,copy,warnings,glob
+import os,sys,copy,warnings,glob,h5py
 import numpy as np
 import numpy.ma as ma
 import matplotlib.pyplot as pt
@@ -155,7 +155,7 @@ def format_grid_file(data,test=False,verbose=True):
     identities = sorted(identities, key=lambda tup: (tup[0],tup[1]))
 
     with open('run.txt','w') as f:
-        f.write('grid,nr,cvs,kappas\n')
+        f.write('grid,nr,cvs,kappas,type\n')
         for id in identities:
             f.write('{},{},{}'.format(id[0],id[1],",".join(gp_lines[id])))
 
@@ -166,25 +166,29 @@ def investigate_overlap(data,test=False):
     """
         Check the overlap heuristic, and create new refinement
     """
-    grids, trajs, kappas, identities = grid_utils.load_grid(data)
-
-    major_grid = None
+    grids, trajs, kappas, identities, types = grid_utils.load_grid(data)
     grid_idx = sorted(grids.keys()) # grids are identified by a grid number
+    grid_dictionary = {-1: None} # set no major grid for first grid
     for idx in grid_idx:
         # Create grid object based on larger grids
-        grid = sampling.create_grid(idx,grids[idx],trajs[idx],kappas[idx],identities[idx],data,major_grid=major_grid)
+        grid = sampling.create_grid(idx,grids[idx],trajs[idx],kappas[idx],identities[idx],types[idx],data,major_grid=grid_dictionary[idx-1])
 
         # Check overlap and create finer grid with corresponding reference points
         grid.check_overlap(idx,data)
         grid.refine_grid() # create additional grid points (and refine confinement for those with deviating trajectories)
 
-        # Throw away points generated outside fringe and output this grid
+        # Throw away points generated outside fringe
         grid_utils.cut_edges(data,grid)
-        grid_utils.write_grid(idx,data,grid,test=test)
-        grid_utils.plot_grid(idx,data,grid)
-
+        
         # Pass this grid object to the next iteration
-        major_grid = grid
+        grid_dictionary[idx] = grid
+
+    # Write the grid information and create nice plots as a visualization of this information
+    for idx in grid_idx:
+        grid_utils.dump_grid(grid_dictionary[idx])
+        grid_utils.plot_grid(grid_dictionary[idx])
+        grid_utils.write_grid(grid_dictionary[idx],data['MAX_LAYERS'],test=test)
+        
 
     # Write a single data file with all the points which have to be simulated from all grids
     format_grid_file(data,test=test)
