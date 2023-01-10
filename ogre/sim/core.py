@@ -27,16 +27,16 @@ def load_potential_file(file_loc):
     return module
 
 class OGRe_Simulation(object):
-    def __init__(self,grid,nr,cvs,kappas,input=None,potential=None,custom_cv=None,
+    def __init__(self,layer,nr,cvs,kappas,input=None,potential=None,custom_cv=None,
                       temp=300*kelvin,press=1e5*pascal,mdsteps=10000,timestep=0.5*femtosecond,h5steps=5,timecon_thermo=100*femtosecond,timecon_baro=1000*femtosecond):
         '''
             **Arguments**
 
-            grid
-                the grid number
+            layer
+                the layer number
 
             nr
-                the number of the grid point in this grid
+                the number of the grid point in this layer
 
             cvs
                 array/list of collective variables corresponding to this point
@@ -74,7 +74,7 @@ class OGRe_Simulation(object):
         self.input = input
 
         # Grid point parameters
-        self.grid = grid
+        self.layer = layer
         self.nr = nr
         self.cvs = cvs
         self.kappas = kappas
@@ -151,7 +151,7 @@ class OGRe_Simulation(object):
 
         # Initialize the input/output files:
         Path('trajs/').mkdir(parents=True, exist_ok=True)
-        f=h5py.File('trajs/traj_{}_{}.h5'.format(int(self.grid),int(self.nr)),mode='w')
+        f=h5py.File('trajs/traj_{}_{}.h5'.format(int(self.layer),int(self.nr)),mode='w')
         hdf=SimpleHDF5Writer(f,step=self.h5steps)
 
         # Initialize the thermostat and the screen logger
@@ -168,7 +168,7 @@ class OGRe_Simulation(object):
         self.log.set_level(self.log.medium)
         Path('logs/').mkdir(parents=True, exist_ok=True)
 
-        with open('logs/log_{}_{}.txt'.format(self.grid,self.nr), 'w') as g:
+        with open('logs/log_{}_{}.txt'.format(self.layer,self.nr), 'w') as g:
             self.log.set_file(g)
 
             system = System.from_file('init.chk', log=self.log)
@@ -199,7 +199,7 @@ class OGRe_Simulation(object):
 
             # Initialize the input/output files:
             Path('trajs/').mkdir(parents=True, exist_ok=True)
-            f=h5py.File('trajs/traj_{}_{}.h5'.format(int(self.grid),int(self.nr)),mode='w')
+            f=h5py.File('trajs/traj_{}_{}.h5'.format(int(self.layer),int(self.nr)),mode='w')
             hdf=HDF5Writer(f,step=self.h5steps)
 
             # Initialize the thermostat, barostat and the screen logger

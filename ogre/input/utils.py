@@ -244,8 +244,8 @@ def get_rows(rvecs,spacings):
     return rows,path
 
 def write_grid(points,options,plot,path):
-    with open('grid{0:0=2d}.txt'.format(0),'w') as f:
-        f.write('grid,nr,cvs,kappas,type\n')
+    with open('layer{0:0=2d}.txt'.format(0),'w') as f:
+        f.write('layer,nr,cvs,kappas,type\n')
         for n,point in enumerate(points):
             f.write('{},{},{},{},{}\n'.format(0,n, '*'.join(['{:.8f}'.format(p) for p in point]), '*'.join(['{:.8e}'.format(k) for k in options.kappas]), 'new_node')) # use * as separator
 

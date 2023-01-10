@@ -25,7 +25,7 @@ import thermolib
 def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f',suffix=None):
     # Generate the required colvars and metadata file
     #print(data['edges'])
-    grids, trajs, kappas, _, _ = grid_utils.load_grid(data,index,verbose=False)
+    locations, trajs, kappas, _, _ = grid_utils.load_grid(data,index,verbose=False)
     cv_units = get_cv_units(data)
     fes_unit = eval(data['fes_unit'])
     edges = { k:copy.copy(np.array(v)*cv_units) for k,v in data['edges'].items() }
@@ -39,18 +39,18 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
 
     # Ravel the trajectories and grids
     rtrajs = np.zeros((0,*trajs[0][:,data['runup']:].shape[1:]))
-    rgrids = np.zeros((0,*grids[0].shape[1:]))
+    rlocations = np.zeros((0,*locations[0].shape[1:]))
     rkappas = np.zeros((0,*kappas[0].shape[1:]))
-    for key in grids.keys():
+    for key in locations.keys():
         rtrajs = np.vstack((rtrajs,trajs[key][:,data['runup']:]))
-        rgrids = np.vstack((rgrids,grids[key]))
+        rlocations = np.vstack((rlocations,locations[key]))
         rkappas = np.vstack((rkappas,kappas[key]))
 
     print("The full trajectories shape taken into account is: ", rtrajs.shape)
 
-    # Convert rgrids and rkappas to atomic units
+    # Convert rlocations and rkappas to atomic units
     rkappas *= 1/cv_units**2 # energy unit remains fes_unit (since thermolib works with kjmol wham units for kappa, no conversion is performed)
-    rgrids *= cv_units
+    rlocations *= cv_units
 
     bins = [int(np.round((edges['max'][i]-edges['min'][i])/(steps[i]))) for i,_ in enumerate(edges['min'])]
 
@@ -62,7 +62,7 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
     if not suffix is None:
         filename += '_{}'.format(suffix)
 
-    grid_utils.write_colvars(filename,rtrajs,rgrids,rkappas,verbose=False)
+    grid_utils.write_colvars(filename,rtrajs,rlocations,rkappas,verbose=False)
 
     # Launch thermolib
     fes_err = np.array([np.nan,np.nan])
@@ -109,86 +109,19 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
 
     grid_utils.write_fes(data,grid,fes_array,index,suffix=suffix,fes_err=fes_err)
     grid_utils.plot_fes(data,grid,fes_array,index,suffix=suffix,fes_err=fes_err)
+    
 ################################
 # CORE CODE
 
-def format_grid_file(data,test=False,verbose=True):
-    if test: # if test the user is only interested in the possible outcome
-        return
-    # Get all compressed trajectory identities
-    identities_compressed = []
-    ctnames = glob.glob('trajs/compressed_*.h5')
-    for ct in ctnames:
-        with h5py.File(ct,'r') as hct:
-            identities_ct = [tuple(val) for val in hct['identities']]
-            for ict in identities_ct:
-                identities_compressed.append(ict)
-
-    # Get all trajectory identities
-    tnames = glob.glob('trajs/traj_*_*.h5')
-    ids = [tn.split('/')[1].split('.')[0].split('_') for tn in tnames]
-    identities_traj = [(int(i[1]),int(i[2])) for i in ids]
-
-    # Get all gridpoint identities
-    gnames = glob.glob('grid*.txt')
-    identities_gp = []
-    gp_lines = {}
-    for gn in gnames:
-        if gn=='grid_restart.txt':
-            continue # skip restart grid
-        else:
-            gnr = int(gn.split('.')[0][4:])
-            if 'MAX_LAYERS' in data and not gnr < data['MAX_LAYERS']:
-                continue
-            with open(gn,'r') as f:
-                lines = f.readlines()
-            lines = lines[1:] # skipheader
-            for l in lines:
-                id_line = l.split(',')[:2]
-                id = (int(id_line[0]),int(id_line[1]))
-                data = l.split(',')[2:]
-                identities_gp.append(id)
-                gp_lines[id] = data
-
-    # Find those elements in identities_gp that are not in identities_traj and sort them for clean grid file
-    identities = list(set(identities_gp)-set(identities_traj)-set(identities_compressed))
-    identities = sorted(identities, key=lambda tup: (tup[0],tup[1]))
-
-    with open('run.txt','w') as f:
-        f.write('grid,nr,cvs,kappas,type\n')
-        for id in identities:
-            f.write('{},{},{}'.format(id[0],id[1],",".join(gp_lines[id])))
-
-    if len(identities)==0 and verbose:
-        print('It might be a good idea to compress your data using ogre_compress_iteration.py, if you do not need the trajectory data for other purposes.')
-
-def investigate_overlap(data,test=False):
+def investigate_overlap(data,debug=False):
     """
         Check the overlap heuristic, and create new refinement
     """
-    grids, trajs, kappas, identities, types = grid_utils.load_grid(data)
-    grid_idx = sorted(grids.keys()) # grids are identified by a grid number
-    grid_dictionary = {-1: None} # set no major grid for first grid
-    for idx in grid_idx:
-        # Create grid object based on larger grids
-        grid = sampling.create_grid(idx,grids[idx],trajs[idx],kappas[idx],identities[idx],types[idx],data,major_grid=grid_dictionary[idx-1])
+    print('Loading Grid')
+    grid = sampling.Grid(data,debug=debug)
 
-        # Check overlap and create finer grid with corresponding reference points
-        grid.check_overlap(idx,data)
-        grid.refine_grid() # create additional grid points (and refine confinement for those with deviating trajectories)
+    print('Refining Grid')
+    grid.refine()
 
-        # Throw away points generated outside fringe
-        grid_utils.cut_edges(data,grid)
-        
-        # Pass this grid object to the next iteration
-        grid_dictionary[idx] = grid
-
-    # Write the grid information and create nice plots as a visualization of this information
-    for idx in grid_idx:
-        grid_utils.dump_grid(grid_dictionary[idx])
-        grid_utils.plot_grid(grid_dictionary[idx])
-        grid_utils.write_grid(grid_dictionary[idx],data['MAX_LAYERS'],test=test)
-        
-
-    # Write a single data file with all the points which have to be simulated from all grids
-    format_grid_file(data,test=test)
+    print('Outputting Grid')
+    grid.output()
