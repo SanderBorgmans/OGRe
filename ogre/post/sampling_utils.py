@@ -15,7 +15,13 @@ def find_neighbours(steps,nodes):
     """
         Find the neighbours for each node
     """
-    points = np.round(np.array([node.loc for node in nodes]),DECIMALS)
+    try:
+        points = np.round(np.array([node.loc for node in nodes]),DECIMALS)
+    except TypeError:
+        print([node.loc for node in nodes])
+        print([node.type for node in nodes])
+        print()
+        raise TypeError
     tree = KDTree(points)
     neighbours = []
     for n,node in enumerate(nodes):

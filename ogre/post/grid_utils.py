@@ -67,17 +67,18 @@ def load_trajs(fname,data,restart,locations,trajs,dkappas,identities,types):
                 tr = f['trajectory/cv_values'][:].reshape((1,-1,len(kappas)))
 
                 if not lnr in locations.keys() or not lnr in trajs.keys():
-                    locations[lnr]   = cvs
-                    trajs[lnr]   = tr
-                    dkappas[lnr] = kappas
-                    identities[lnr] = [identity]
-                    types[lnr] = [dtype]
-                else:
-                    locations[lnr]   = np.vstack((locations[lnr], cvs))
-                    trajs[lnr]   = np.vstack((trajs[lnr], tr))
-                    dkappas[lnr] = np.vstack((dkappas[lnr], kappas))
-                    identities[lnr].append(identity)
-                    types[lnr].append(dtype)
+                    locations[lnr]   = np.empty((0,len(kappas)))
+                    trajs[lnr]   = np.empty((0,tr.shape[1],len(kappas)))
+                    dkappas[lnr] = np.empty((0,len(kappas)))
+                    identities[lnr] = []
+                    types[lnr] = []
+
+
+                locations[lnr]   = np.vstack((locations[lnr], cvs))
+                trajs[lnr]   = np.vstack((trajs[lnr], tr))
+                dkappas[lnr] = np.vstack((dkappas[lnr], kappas))
+                identities[lnr].append(identity)
+                types[lnr].append(dtype)
 
         except Exception:
             restart += '{},{},{},{}\n'.format(identity[0],identity[1],"*".join(['{:.8f}'.format(p) for p in cvs]),"*".join(['{:.8e}'.format(k) for k in kappas]),dtype)
@@ -472,8 +473,8 @@ def write_layer(layer,max_index=None,debug=False):
                 # Make the necessary replacements and additions
                 # Read the layer information
                 next_layer_information = np.genfromtxt(next_layer_name, delimiter=',',dtype=object,skip_header=1,encoding='utf')
-                
-                if next_layer_information.size==1: # problem with single line files
+
+                if len(next_layer_information.shape)==1: # problem with single line files
                     next_layer_information = np.array([next_layer_information])
 
                 for node in layer.sublayer_nodes:
@@ -498,7 +499,7 @@ def write_layer(layer,max_index=None,debug=False):
 
     # Read the layer file, everything will be read as a byte string
     layer_information = np.genfromtxt(layer_name, delimiter=',',dtype=object,skip_header=1,encoding='utf')
-    if layer_information.size==1: # problem with single line files
+    if len(layer_information.shape)==1: # problem with single line files
         layer_information = np.array([layer_information])
 
     # Check all nodes, layer.nodes contains:
