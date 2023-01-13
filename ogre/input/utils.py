@@ -15,7 +15,11 @@ warnings.filterwarnings('ignore')
 
 def save2yaml(options,mode=None):
     d = vars(options)
+    d = copy.deepcopy(d) # such that removing things from the dict do not affect options
     if mode is not None: d.update({'mode' : mode})
+    if hasattr(options,'rvecs'):
+        del d['rvecs']
+
     if os.path.exists('data.yml'):
         with open('data.yml','r') as yamlfile:
             cyaml = yaml.safe_load(yamlfile) # Note the safe_load
@@ -148,6 +152,7 @@ class OGRe_Input(object):
             assert cv_units[0]==cv_units[1]
             rvecs = chk['rvecs']/cv_units[0] # assume rvecs are in atomic units
             edges = get_edges(rvecs) 
+            self.rvecs = rvecs
             self.edges = {'min' : [float(edges[0]),float(edges[2])], 'max' : [float(edges[1]),float(edges[3])]}
 
         # Convert edges to dictionary for easy parsing
@@ -238,7 +243,7 @@ def get_edges(rvecs):
     return [np.min(vertices[:,0]),np.max(vertices[:,0]),np.min(vertices[:,1]),np.max(vertices[:,1])]
 
 def get_rows(rvecs,spacings):
-    _,path = wigner_seitz_cell(rvecs[0:2,0:2])
+    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2])
     r = np.max(np.linalg.norm(path.vertices,axis=-1))
     rows = [np.sort(np.hstack((np.arange(-sp,-r-sp,-sp), np.array([0]),  np.arange(sp, r+sp, sp)))) for sp in spacings] # make square grid from -r to r (too big)
     return rows,path
@@ -283,10 +288,18 @@ def make_grid(options):
     assert len(min) == len(options.kappas)
     options.spacings = np.array(options.spacings)
 
-    arrs = [np.arange(min[n],max[n]+options.spacings[n],options.spacings[n]) for n,_ in enumerate(min)]
-    g = np.meshgrid(*arrs,indexing='ij')
-    mesh = np.vstack(map(np.ravel, g)).T
-    write_grid(mesh,options,plot,make_path(min,max))
+    if hasattr(options,'cof2d') and options.cof2d:
+        rows, path = get_rows(options.rvecs,options.spacings)
+        g = np.meshgrid(*rows,indexing='ij')
+        mesh = np.vstack(map(np.ravel, g)).T
+        mesh = mesh[path.contains_points(mesh,radius=np.min(options.spacings)*2.1)] # return points within path + fringe for better convergence of edges, change this to 2.1 for symmetric grid (it was 2.0 before)
+        write_grid(mesh,options,plot,path)
+
+    else:
+        arrs = [np.arange(min[n],max[n]+options.spacings[n],options.spacings[n]) for n,_ in enumerate(min)]
+        g = np.meshgrid(*arrs,indexing='ij')
+        mesh = np.vstack(map(np.ravel, g)).T
+        write_grid(mesh,options,plot,make_path(min,max))
 
 def get_cv_units(data):
     if 'cv_units' in data:

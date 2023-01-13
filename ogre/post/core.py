@@ -70,6 +70,7 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
 
     if len(steps) == 1:
         # 1D CASE
+        # here the bias potential functional form can be adapted by providing the appropriate value to 'bias_potential' 
         _, biasses, trajectories = thermolib.read_wham_input(filename, path_template_colvar_fns='%s', stride=1, verbose=False)
         
         hist = thermolib.Histogram1D.from_wham_c(bin_edges[0], trajectories, biasses, temp, error_estimate=error_estimate,
@@ -86,6 +87,7 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
 
     elif len(steps) == 2:
         # 2D CASE
+        # here the bias potential functional form can be adapted by providing the appropriate value to 'bias_potential' 
         _, biasses, trajectories = thermolib.read_wham_input_2D(filename, path_template_colvar_fns='%s', stride=1, verbose=False)
 
         hist = thermolib.Histogram2D.from_wham_c(bin_edges, trajectories, biasses, temp, error_estimate=error_estimate,
