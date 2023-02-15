@@ -1,6 +1,7 @@
 #! /usr/bin/python
 import numpy as np
 import matplotlib.pyplot as pt
+import warnings
 
 from scipy.spatial import cKDTree as KDTree # identical to KDTree but a lot faster before v1.6.0 
 from molmod.units import *
@@ -139,6 +140,11 @@ class Grid:
 
                 # identify the simulation with a node from the superlayer.sublayer_nodes and replace it before it gets added below
                 rn_idx = self.get_node_from_nodes(tree,point)
+                if rn_idx is None:
+                    # this happens when virtual nodes are suddenly recognized as deviant, and all dependent nodes temporarily disappear
+                    # since this can only happen for already existing grid files, they will never be deleted, and later recognized when required
+                    # even when a realized benchmark node would be replaced by a new node, it will recognize the location, and take its place
+                    continue
                 superlayer.sublayer_nodes[rn_idx] = RealizedBenchmarkNode(tmp_node)
 
             # CASE 3: the node is a benchmark node, but does not need updating

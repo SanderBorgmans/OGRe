@@ -199,7 +199,7 @@ def scatter(ax,nodes,n,size=1,labels=False):
     benchmark_realized_nodes = np.array([node for node in nodes if isinstance(node,RealizedBenchmarkNode)])
 
     scatter_nodes(ax,layer_nodes,"Node" if labels else None,                                       settings={'s':0.30*size, 'c':colors[n]})
-    scatter_nodes(ax,deviant_layer_nodes,"Deviant" if labels else None,                            settings={'s':1.25*size, 'linewidths':0.5, 'marker':'s', 'facecolor':'none', 'edgecolor':'r'})
+    scatter_nodes(ax,deviant_layer_nodes,"Deviant" if labels else None,                            settings={'s':5.00*size, 'linewidths':0.5, 'marker':'s', 'facecolor':'none', 'edgecolor':'r'})
     scatter_nodes(ax,benchmark_superlayer_nodes,"Benchmark Node - superlayer" if labels else None, settings={'s':1.25*size, 'linewidths':0.5, 'marker':'s', 'facecolor':'none', 'edgecolor':colors[n-1]})
     scatter_nodes(ax,benchmark_virtual_nodes,"Benchmark Node - virtual" if labels else None,       settings={'s':0.10*size, 'c':colors[n-1], 'marker':'x'})
     scatter_nodes(ax,benchmark_realized_nodes,"Benchmark Node - realized" if labels else None,     settings={'s':1.25*size, 'c':colors[n-1], 'marker':'s'})
