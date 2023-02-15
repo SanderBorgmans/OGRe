@@ -27,8 +27,8 @@ def load_potential_file(file_loc):
     return module
 
 class OGRe_Simulation(object):
-    def __init__(self,layer,nr,cvs,kappas,input=None,potential=None,custom_cv=None,
-                      temp=300*kelvin,press=1e5*pascal,mdsteps=10000,timestep=0.5*femtosecond,h5steps=5,timecon_thermo=100*femtosecond,timecon_baro=1000*femtosecond):
+    def __init__(self,layer,nr,input=None,potential=None,custom_cv=None,
+                      temp=300*kelvin,press=1e5*pascal,mdsteps=5000,timestep=0.5*femtosecond,h5steps=5,timecon_thermo=100*femtosecond,timecon_baro=1000*femtosecond):
         '''
             **Arguments**
 
@@ -37,14 +37,6 @@ class OGRe_Simulation(object):
 
             nr
                 the number of the grid point in this layer
-
-            cvs
-                array/list of collective variables corresponding to this point
-                expressed in units as defined in input
-
-            kappas
-                array/list of kappas corresponding to each collective variable
-                expressed in units of kJ/mol/units**2 for each collective variable
 
             **Optional Arguments**
 
@@ -76,8 +68,34 @@ class OGRe_Simulation(object):
         # Grid point parameters
         self.layer = layer
         self.nr = nr
+
+        # Load the rest from the grid file
+        fname = 'layer{0:0=2d}.txt'.format(self.layer)
+        
+        grid = np.genfromtxt(fname, delimiter=',',dtype=None,skip_header=1)
+        if grid.size==1: # problem with single line files
+            grid = np.array([grid])
+
+        point = grid[self.nr]
+        assert point[0]==self.layer
+        assert point[1]==self.nr
+
+        if isinstance(point[2],float):
+            cvs = np.array([point[2]])
+        else:
+            cvs = np.array([float(p) for p in point[2].decode().split('*')])
+
+        # Define kappas
+        if isinstance(point[3],float):
+            kappas = np.array([point[3]])
+        else:
+            kappas = np.array([float(k) for k in point[3].decode().split('*')])
+
+        dtype = point[4].decode()
+
         self.cvs = cvs
         self.kappas = kappas
+        self.type = dtype
 
         # Simulation parameters
         self.potential = potential
@@ -137,7 +155,7 @@ class OGRe_Simulation(object):
 
     def simulate(self):
         # Select simulation mode
-        if self.input.mode in ['analytic']:
+        if self.input.mode == 'analytic':
             self.sim_analytic()
         elif self.input.mode == 'application':
             self.sim_application()
