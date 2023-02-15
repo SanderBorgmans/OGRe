@@ -28,7 +28,7 @@ def load_potential_file(file_loc):
 
 class OGRe_Simulation(object):
     def __init__(self,layer,nr,input=None,potential=None,custom_cv=None,
-                      temp=300*kelvin,press=1e5*pascal,mdsteps=5000,timestep=0.5*femtosecond,h5steps=5,timecon_thermo=100*femtosecond,timecon_baro=1000*femtosecond):
+                      temp=300*kelvin,press=None,mdsteps=5000,timestep=0.5*femtosecond,h5steps=5,timecon_thermo=100*femtosecond,timecon_baro=1000*femtosecond):
         '''
             **Arguments**
 
@@ -221,13 +221,19 @@ class OGRe_Simulation(object):
             hdf=HDF5Writer(f,step=self.h5steps)
 
             # Initialize the thermostat, barostat and the screen logger
-            thermo = NHCThermostat(self.temp, timecon=self.timecon_thermo)
-            baro = MTKBarostat(ff,self.temp, self.press, timecon=self.timecon_baro, vol_constraint=False)
-            TBC = TBCombination(thermo, baro)
             vsl = VerletScreenLog(step=100)
+            thermo = NHCThermostat(self.temp, timecon=self.timecon_thermo)
+            hooks = [vsl,hdf]
+
+            if self.press is not None:
+                baro = MTKBarostat(ff,self.temp, self.press, timecon=self.timecon_baro, vol_constraint=False)
+                TBC = TBCombination(thermo, baro)
+                hooks.append(TBC)
+            else:
+                hooks.append(thermo)
 
             # Initialize the US simulation
-            verlet = VerletIntegrator(ff, self.timestep, hooks=[vsl, TBC, hdf], state=[CVStateItem(cv)])
+            verlet = VerletIntegrator(ff, self.timestep, hooks=hooks, state=[CVStateItem(cv)])
 
             # Run the simulation
             verlet.run(self.mdsteps)
