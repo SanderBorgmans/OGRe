@@ -2,7 +2,9 @@
 import os,time,h5py,glob,pickle,sys,warnings
 import numpy as np
 import matplotlib.pyplot as pt
+import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
+
 
 from molmod.units import *
 from ogre.input.utils import wigner_seitz_cell
@@ -81,7 +83,7 @@ def load_trajs(fname,data,restart,locations,trajs,dkappas,identities,types):
                 types[lnr].append(dtype)
 
         except Exception:
-            restart += '{},{},{},{}\n'.format(identity[0],identity[1],"*".join(['{:.8f}'.format(p) for p in cvs]),"*".join(['{:.8e}'.format(k) for k in kappas]),dtype)
+            restart += '{},{},{},{},{}\n'.format(identity[0],identity[1],"*".join(['{:.8f}'.format(p) for p in cvs]),"*".join(['{:.8e}'.format(k) for k in kappas]),dtype)
 
     if len(restart)>0:
         gr = open('grid_restart.txt','w')
@@ -191,7 +193,7 @@ def scatter_nodes(ax,nodes,label,settings={}):
     else:
         pass # no plot functionality for N>2 dimensions
 
-def scatter(ax,nodes,n,size=1,labels=False):
+def scatter(ax,nodes,n,size=1,labels=False,show_deviants=True):
     layer_nodes = np.array([node for node in nodes if isinstance(node,Node)])
     deviant_layer_nodes = np.array([node for node in nodes if not node.sane]) # this will capture all node and benchmarknodes that are deviant
     benchmark_superlayer_nodes = np.array([node for node in nodes if isinstance(node,SuperlayerBenchmarkNode)])
@@ -199,28 +201,49 @@ def scatter(ax,nodes,n,size=1,labels=False):
     benchmark_realized_nodes = np.array([node for node in nodes if isinstance(node,RealizedBenchmarkNode)])
 
     scatter_nodes(ax,layer_nodes,"Node" if labels else None,                                       settings={'s':0.30*size, 'c':colors[n]})
-    scatter_nodes(ax,deviant_layer_nodes,"Deviant" if labels else None,                            settings={'s':5.00*size, 'linewidths':0.5, 'marker':'s', 'facecolor':'none', 'edgecolor':'r'})
+    if show_deviants:
+        scatter_nodes(ax,deviant_layer_nodes,"Deviant" if labels else None,                        settings={'s':5.00*size, 'linewidths':0.5, 'marker':'s', 'facecolor':'none', 'edgecolor':'r'})
     scatter_nodes(ax,benchmark_superlayer_nodes,"Benchmark Node - superlayer" if labels else None, settings={'s':1.25*size, 'linewidths':0.5, 'marker':'s', 'facecolor':'none', 'edgecolor':colors[n-1]})
     scatter_nodes(ax,benchmark_virtual_nodes,"Benchmark Node - virtual" if labels else None,       settings={'s':0.10*size, 'c':colors[n-1], 'marker':'x'})
     scatter_nodes(ax,benchmark_realized_nodes,"Benchmark Node - realized" if labels else None,     settings={'s':1.25*size, 'c':colors[n-1], 'marker':'s'})
 
-def plot_ref_grid(ax,grid,size=1.):
+def plot_ref_grid(ax,grid,size=1.,show_deviants=True):
     tmp = grid.superlayer
     tmp_nodes = []
     while not tmp is None:
         tmp_nodes.append(tmp.nodes)
         tmp = tmp.superlayer
     for n,tmpn in enumerate(tmp_nodes[::-1]):
-        scatter(ax,tmpn,n,size=size*0.25)
-    scatter(ax,grid.nodes,len(tmp_nodes),size=size,labels=True) # add labels for the final scatter
+        scatter(ax,tmpn,n,size=size*0.25,show_deviants=show_deviants)
+    scatter(ax,grid.nodes,len(tmp_nodes),size=size,labels=True,show_deviants=show_deviants) # add labels for the final scatter
 
-def plot_dev(ax, node, traj, steps):
+def plot_dev(ax, node, traj, steps, layer):
+    grid = layer.grid
+    binwidths = grid.HISTOGRAM_BIN_WIDTHS
+    bins = tuple([int(((grid.edges['max'][i]+grid.spacings[i])-(grid.edges['min'][i]-grid.spacings[i]))//binwidths[i]) for i in range(traj.shape[1])])
+
+    h1, edges = np.histogramdd(traj[grid.RUN_UP_TIME:], bins=bins, range=[(grid.edges['min'][i]-grid.spacings[i],
+                                                                           grid.edges['max'][i]+grid.spacings[i]) for i in range(traj.shape[1])], density=True)
+
     if len(node.loc) == 1:
-        ax.scatter(traj[:],np.zeros_like(traj[:]),s=0.1, c='r')
-        ax.scatter([node.loc[0]],[0],s=20.0,marker='x',c='r')
-        ax.vlines(((node.loc[0]+ np.array([steps[0],-steps[0]]))),-0.5,0.5)
-        ax.set_xlim([(node.loc[0]-2*steps[0]),(node.loc[0]+2*steps[0])])
-        ax.set_ylim([-0.5,0.5])
+        # (left corner, width, height) histogram starts at 0.1
+        ax.add_patch(mpatches.Rectangle((node.loc[0]-steps[0], 0.1), 2*steps[0], np.max(h1)+0.25, facecolor='#e6e6e6', fill=True, zorder=-10))
+        ax.bar(edges[0][:-1],h1,align='edge',width=binwidths,bottom=0.1,color=colors[layer.index+1],edgecolor='k',zorder=-1)
+        ax.scatter([node.loc[0]],[0],s=20.0,marker='x',c=colors[1])
+        ax.set_xlim([(node.loc[0]-3*steps[0]),(node.loc[0]+3*steps[0])])
+        ax.set_ylim([-0.25,np.max(h1)+0.25])
+
+        pt.tick_params(
+        axis='y',          # changes apply to the x-axis
+        which='both',      # both major and minor ticks are affected
+        left=False,        # ticks along the left edge are off
+        right=False,       # ticks along the right edge are off
+        labelleft=False)  # labels along the left edge are off
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+            
     elif len(node.loc) == 2:
         _,path = wigner_seitz_cell(np.diag(steps*2),False)
         path.vertices += node.loc
@@ -234,17 +257,43 @@ def plot_dev(ax, node, traj, steps):
     else:
         raise NotImplementedError("Can't make deviation plots in more than 2 dimensions.")
 
-def plot_overlap(ax, node1, node2, t1, trajs2, steps):
+def plot_overlap(ax, node1, node2, traj1, trajs2, steps, layer):
+    grid = layer.grid
+    binwidths = grid.HISTOGRAM_BIN_WIDTHS
+    bins = tuple([int(((grid.edges['max'][i]+grid.spacings[i])-(grid.edges['min'][i]-grid.spacings[i]))//binwidths[i]) for i in range(traj1.shape[1])])
+
+    h1, edges = np.histogramdd(traj1[grid.RUN_UP_TIME:], bins=bins, range=[(grid.edges['min'][i]-grid.spacings[i],
+                                                                            grid.edges['max'][i]+grid.spacings[i]) for i in range(traj1.shape[1])], density=True)
+
+    h2s = []
+    for traj2 in trajs2:
+        h2, edges = np.histogramdd(traj2[grid.RUN_UP_TIME:], bins=bins, range=[(grid.edges['min'][i]-grid.spacings[i],
+                                                                                grid.edges['max'][i]+grid.spacings[i]) for i in range(traj2.shape[1])], density=True)
+        h2s.append(h2)
+    h2 = np.average(np.array(h2s),axis=0)
+
+
     if len(node1.loc) == 1:
-        ax.scatter([node1.loc[0]],[0],s=30.0,marker='x',c='r',label='t1_loc')
-        ax.scatter([node2.loc[0]],[0],s=30.0,marker='x',c='b',label='t2_loc')
-        if len(trajs2)>1:
-            for t2 in trajs2:
-                pt.scatter(t2[0,0],0,s=40,marker='x', c='g')#, label='t2')
-        pt.scatter(t1,np.zeros_like(t1),s=0.1, c='r')#, label='t1')
-        for t2 in trajs2:
-            pt.scatter(t2,np.zeros_like(t2),s=0.1, c='b')#, label='t2')
+        ax.scatter([node1.loc[0]],[0],s=30.0,marker='x',c=colors[1],label='node_1')
+        ax.scatter([node2.loc[0]],[0],s=30.0,marker='x',c=colors[2],label='node_2')
+
+        ax.bar(edges[0][:-1],h1,align='edge',width=binwidths,bottom=0.1,fill=False,edgecolor=colors[layer.index+1],zorder=-1)
+        ax.bar(edges[0][:-1],h2,align='edge',width=binwidths,bottom=0.1,fill=False,edgecolor=colors[layer.index+2],zorder=-1)
+        ax.bar(edges[0][:-1],np.minimum(h1,h2),align='edge',width=binwidths,bottom=0.1,color=colors[layer.index+3],zorder=0)#label='overlap')
         pt.xlim([(node1.loc[0]-4*steps[0]),(node1.loc[0]+4*steps[0])])
+
+        pt.tick_params(
+        axis='y',          # changes apply to the x-axis
+        which='both',      # both major and minor ticks are affected
+        left=False,        # ticks along the left edge are off
+        right=False,       # ticks along the right edge are off
+        labelleft=False)  # labels along the left edge are off
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+
+        
     elif len(node1.loc) == 2:
         ax.scatter([node1.loc[0]],[node1.loc[1]],s=30.0,marker='x',c='r',label='t1_loc')
         ax.scatter([node2.loc[0]],[node2.loc[1]],s=30.0,marker='x',c='b',label='t2_loc')
@@ -282,6 +331,12 @@ def plot_layer(layer):
     layer_loc = np.array([node.loc for node in layer.nodes])
     if layer_loc.shape[1] == 1:
         fig.set_size_inches(((layer.index+1)*4,1))
+        pt.tick_params(
+        axis='y',          # changes apply to the x-axis
+        which='both',      # both major and minor ticks are affected
+        left=False,        # ticks along the left edge are off
+        right=False,       # ticks along the right edge are off
+        labelleft=False)  # labels along the left edge are off
     elif layer_loc.shape[1] == 2:
         fig.set_size_inches(((layer.index+1)*2,(layer.index+1)*2))
     else:
@@ -334,7 +389,7 @@ def plot_layer(layer):
                   settings={'s':2.0, 'linewidths':0.5, 'marker':'s', 'facecolor':'none', 'edgecolor':'r', 'alpha':0.5})
 
 
-    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5),frameon=False)
     fig.savefig('grid_points_{}.pdf'.format(layer.index),bbox_inches='tight')
     pt.close('layer')
 
@@ -422,7 +477,6 @@ def add_node_to_grid_info(layer,layer_info,node,require_presence=False,verbose=F
 
     if idx.size>0:
         assert idx.size==1
-        # change the kappa values, the rest should be the same
         layer_info[index] = node.node_info(grid=layer.grid,identity=identity)
     else:
         layer_info = np.vstack((layer_info,node.node_info(grid=layer.grid,identity=identity)))

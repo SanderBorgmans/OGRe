@@ -15,7 +15,9 @@ class Node(object):
         self.identity = identity
         self.neighbours = []
         self.extreme_kappa = False
-        self.sane = True 
+        #self.sane = True 
+        self.converged = True
+        self.confined = True
         self._type = None
 
     def set_extreme_kappa(self,MAX_KAPPA,KAPPA_GROWTH_FACTOR):
@@ -23,12 +25,19 @@ class Node(object):
             self.extreme_kappa = True
 
     @property
+    def sane(self):
+        return self.confined and self.converged
+
+    @property
     def type(self):
-        self._type = 'node' if self.sane else 'deviant_node'
+        if not self.converged:
+            self._type = 'non_converged_node'
+        else:
+            self._type = 'node' if self.sane else 'deviant_node'
         return self._type
 
     def node_info(self,identity=None,grid=None):
-        if self.sane:
+        if self.confined:
             kappas = self.kappas
         else:
             kappas = np.clip(self.kappas*grid.KAPPA_GROWTH_FACTOR,0,grid.MAX_KAPPA)
@@ -88,7 +97,7 @@ class SuperlayerBenchmarkNode(BenchmarkNode):
         # This will initialize the benchmark node based on a node from the upper lying layer
         assert node.sane
         super(SuperlayerBenchmarkNode,self).__init__(node.loc,[node])
-        self._sane = layer.traj_confinement(self,factor=2.) >= layer.grid.CONFINEMENT_THR
+        self._sane = layer.traj_confinement(self,factor=2.,plot=False) >= layer.grid.CONFINEMENT_THR
 
     @property
     def type(self):
@@ -101,6 +110,10 @@ class SuperlayerBenchmarkNode(BenchmarkNode):
     @property
     def sane(self):
         return self._sane
+
+    @property
+    def identity(self):
+        return self.nodes[0].identity
 
     def node_info(self,identity=None,grid=None):
         raise ValueError('This function should never be called on this object')
@@ -147,6 +160,10 @@ class RealizedBenchmarkNode(BenchmarkNode):
     @property
     def type(self):
         self._type = 'realized_benchmark_node' if self.sane else 'deviant_realized_benchmark_node'
+        # Overwrite if the underlying node is not converged
+        if isinstance(self.node,Node):
+            if not self.node.converged:
+                self._type = 'non_converged_realized_benchmark_node'
         return self._type
 
     @property
@@ -159,7 +176,13 @@ class RealizedBenchmarkNode(BenchmarkNode):
 
     
     def node_info(self,identity=None,grid=None):
-        if self.sane:
+        reference_node_info = self.node.node_info(identity=identity,grid=grid)
+
+        # Update type to benchmark type
+        reference_node_info[-1] = self.type.encode()
+        return reference_node_info
+
+        """if self.confined:
             kappas = self.kappas
         else:
             kappas = np.clip(self.kappas*grid.KAPPA_GROWTH_FACTOR,0,grid.MAX_KAPPA)
@@ -173,4 +196,4 @@ class RealizedBenchmarkNode(BenchmarkNode):
                     "*".join(['{:.8f}'.format(p) for p in self.loc]).encode(),
                     "*".join(['{:.8e}'.format(kappa) for kappa in kappas]).encode(),
                     self.type.encode()
-                    ],dtype=object)
+                    ],dtype=object)"""

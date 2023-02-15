@@ -73,7 +73,12 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
         # here the bias potential functional form can be adapted by providing the appropriate value to 'bias_potential'
         _, biasses, trajectories = thermolib.read_wham_input(filename, path_template_colvar_fns='%s', stride=1, verbose=False)
         
-        hist = thermolib.Histogram1D.from_wham_c(bin_edges[0], trajectories, biasses, temp, error_estimate=error_estimate,
+        try:
+            hist = thermolib.Histogram1D.from_wham_c(bin_edges[0], trajectories, biasses, temp, error_estimate=error_estimate,
+                                       verbosity='low', convergence=1e-7, Nscf=10000)
+        except FloatingPointError:
+            error_estimate=None
+            hist = thermolib.Histogram1D.from_wham_c(bin_edges[0], trajectories, biasses, temp, error_estimate=error_estimate,
                                        verbosity='low', convergence=1e-7, Nscf=10000)
                                        
         fes = thermolib.BaseFreeEnergyProfile.from_histogram(hist, temp)
@@ -98,10 +103,10 @@ def generate_fes_thermolib(data,index=None,step_factor=0.1,error_estimate='mle_f
 
         grid = np.array(np.meshgrid(fes.cv1s.copy(),fes.cv2s.copy())).T.reshape(*bins,len(steps))
 
-        fes_array = fes.fs.copy().reshape(*bins)
+        fes_array = fes.fs.copy().T.reshape(*bins)
         if error_estimate is not None:
             if fes.flower is not None and fes.fupper is not None: 
-                fes_err = np.array([fes.flower.copy().reshape(*bins),fes.fupper.copy().reshape(*bins)])
+                fes_err = np.array([fes.flower.copy().T.reshape(*bins),fes.fupper.copy().T.reshape(*bins)])
     else:
         raise NotImplementedError('Thermolib does not support N-dim free energy evaluation at this point.')
 

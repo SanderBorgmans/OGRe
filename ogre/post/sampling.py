@@ -4,6 +4,7 @@ import matplotlib.pyplot as pt
 import warnings
 
 from scipy.spatial import cKDTree as KDTree # identical to KDTree but a lot faster before v1.6.0 
+from scipy.spatial.distance import jensenshannon
 from molmod.units import *
 from ogre.post.sampling_utils import *
 from ogre.post.nodes import *
@@ -28,6 +29,7 @@ class Grid:
         self.RUN_UP_TIME          = self.data['runup']                if 'runup'                in self.data else 0
         self.MAX_LAYERS           = self.data['MAX_LAYERS']           if 'MAX_LAYERS'           in self.data else 1
         self.CONFINEMENT_THR      = self.data['CONFINEMENT_THR']      if 'CONFINEMENT_THR'      in self.data else 0.30
+        self.JS_THR               = self.data['JS_THR']               if 'JS_THR'               in self.data else None
         self.OVERLAP_THR          = self.data['OVERLAP_THR']          if 'OVERLAP_THR'          in self.data else 0.30
         self.KAPPA_GROWTH_FACTOR  = self.data['KAPPA_GROWTH_FACTOR']  if 'KAPPA_GROWTH_FACTOR'  in self.data else 2.
         self.MAX_KAPPA            = self.data['MAX_KAPPA']            if 'MAX_KAPPA'            in self.data else np.inf
@@ -112,7 +114,7 @@ class Grid:
         for n,point in enumerate(self.locations[index]):
             # CASE 1: the node is real, i.e. not a benchmark node
             if 'benchmark' not in self.types[index][n]: # ['node','new_node','deviant_node']
-                # the sanity of deviant nodes will be checked later
+                # the convergence and sanity of deviant nodes will be checked later
                 nodes.append(Node(point,self.trajs[index][n],self.kappas[index][n],self.identities[index][n]))
 
                 # also alter these in the sublayer of the superlayer
@@ -127,15 +129,23 @@ class Grid:
 
                 # check the sanity of the new node
                 tmp_node = Node(point,self.trajs[index][n],self.kappas[index][n],self.identities[index][n])
-                confinement = superlayer.traj_confinement(tmp_node,factor=2.) # choosing a factor 2 effectively checks confinement for current layer
-                tmp_node.sane = confinement>=self.CONFINEMENT_THR
+                confinement = superlayer.traj_confinement(tmp_node,factor=2.,plot=False) # choosing a factor 2 effectively checks confinement for current layer
+                converged = superlayer.traj_convergence(tmp_node) 
+                tmp_node.confined = confinement>=self.CONFINEMENT_THR
+
+                if tmp_node.confined:
+                    tmp_node.converged = converged
+                    
+                    if not tmp_node.converged:
+                        print(tmp_node.identity, ': this benchmark node requires a new simulation.')
+
 
                 # although unlikely, we should check whether a deviant benchmark node would cross the max_kappa
                 # if so set the sanity to True, but throw a warning
                 if not tmp_node.sane:
                     tmp_node.set_extreme_kappa(self.MAX_KAPPA,self.KAPPA_GROWTH_FACTOR)
                     if tmp_node.extreme_kappa:
-                        tmp_node.sane = True
+                        tmp_node.confined = True
                         print('A benchmark node at {} tried to increase its kappa value above the allowed value. Setting sanity to True ...'.format(",".join(['{:.8f}'.format(p) for p in tmp_node.loc])))
 
                 # identify the simulation with a node from the superlayer.sublayer_nodes and replace it before it gets added below
@@ -187,7 +197,28 @@ class Layer(object):
         for i,_ in enumerate(spacings):
             self.sublayer_nodes = [node for node in self.sublayer_nodes if node.loc[i] <= edges['max'][i]+precision and node.loc[i] >= edges['min'][i]-precision]
 
-    def traj_confinement(self,node,factor=1.):
+    def traj_convergence(self,node):
+        """
+        This tests whether the PDFs of the first half and the second half of the trajectory are consistent enough
+        """
+        if self.grid.JS_THR is None:
+            return True
+
+        trajs=node.trajs
+        t = trajs[0][self.grid.RUN_UP_TIME:]
+
+        binwidths = self.grid.HISTOGRAM_BIN_WIDTHS
+        bins = tuple([int(((self.grid.edges['max'][i]+self.grid.spacings[i])-(self.grid.edges['min'][i]-self.grid.spacings[i]))//binwidths[i]) for i in range(t.shape[1])])
+
+
+        h1, _ = np.histogramdd(t[:len(t)//2], bins=bins, range=[(self.grid.edges['min'][i]-self.grid.spacings[i],
+                                                                 self.grid.edges['max'][i]+self.grid.spacings[i]) for i in range(t.shape[1])], density=True)
+        h2, _ = np.histogramdd(t[len(t)//2:], bins=bins, range=[(self.grid.edges['min'][i]-self.grid.spacings[i],
+                                                                 self.grid.edges['max'][i]+self.grid.spacings[i]) for i in range(t.shape[1])], density=True)
+        return jensenshannon(h1,h2)**2 < self.grid.JS_THR
+    
+    
+    def traj_confinement(self,node,factor=1.,plot=True):
         trajs = node.trajs
 
         t = trajs[0][self.grid.RUN_UP_TIME:]
@@ -202,13 +233,14 @@ class Layer(object):
             mask = mask & (t[:,n]<node.loc[n]+step/factor) & (t[:,n]>node.loc[n]-step/factor)
         confinement = sum(mask)/float(len(mask))
 
-        if self.grid.PLOT_CON and confinement < self.grid.CONFINEMENT_THR:
+        if self.grid.PLOT_CON and plot and confinement < self.grid.CONFINEMENT_THR:
             fig = pt.figure()
             ax = fig.gca()
-            grid_utils.plot_ref_grid(ax,self,size=50.0)
-            grid_utils.plot_dev(ax, node, fullt, self.steps)
-            fig.suptitle("Confinement = {:4.3f}".format(confinement))
-            pt.show()
+            grid_utils.plot_ref_grid(ax,self,size=50.0,show_deviants=False) 
+            grid_utils.plot_dev(ax, node, fullt, self.steps, self)
+            fig.suptitle("Sanity = {:4.3f}".format(confinement))
+            #pt.show()
+            fig.savefig('confinement_{}.pdf'.format("-".join([str(i) for i in node.identity])),bbox_inches='tight')
         return confinement
 
 
@@ -242,11 +274,12 @@ class Layer(object):
         if self.grid.PLOT_OVERLAP and overlap < self.grid.OVERLAP_THR:
             fig = pt.figure()
             ax = fig.gca()
-            grid_utils.plot_ref_grid(ax,self,size=10.0)
-            grid_utils.plot_overlap(ax, node1, node2, t1, trajs2, self.steps)
-            fig.legend()
-            fig.suptitle("Overlap = {}".format(overlap))
-            pt.show()
+            grid_utils.plot_ref_grid(ax,self,size=10.0,show_deviants=False) 
+            grid_utils.plot_overlap(ax, node1, node2, t1, trajs2, self.steps, self)
+            #fig.legend()
+            fig.suptitle("Overlap = {:4.3f}".format(overlap))
+            #pt.show()
+            fig.savefig('overlap_{}_{}.pdf'.format("-".join([str(i) for i in node1.identity]),"-".join([str(i) for i in node2.identity])),bbox_inches='tight')
         return overlap
 
     def characterize_nodes(self):
@@ -269,6 +302,12 @@ class Layer(object):
 
         if len(self.steps) == 1:
             fig = pt.figure('check_overlap',figsize=((self.index+1)*4,2))
+            pt.tick_params(
+            axis='y',          # changes apply to the x-axis
+            which='both',      # both major and minor ticks are affected
+            left=False,        # ticks along the left edge are off
+            right=False,       # ticks along the right edge are off
+            labelleft=False)  # labels along the left edge are off
         elif len(self.steps) == 2:
             fig = pt.figure('check_overlap',figsize=((self.index+1)*2,(self.index+1)*2))
         else:
@@ -280,17 +319,29 @@ class Layer(object):
         grid_utils.plot_ref_grid(ax,self,size=1.)
         pt.close('check_overlap') # make sure this does not get plotted somewhere
 
-        # Check if certain simulations deviatiated substantially from their supposed locations
+        # Check if certain simulations are not converged or whether they deviatiated substantially from their supposed locations
         for n,node in enumerate(self.nodes):
             if isinstance(node, Node) and not node.extreme_kappa:
+                # Check traj confinement
                 confinement = self.traj_confinement(node)
                 # If the simulation went out of bounds, the overlap loses all meaning at this location
                 if confinement < self.grid.CONFINEMENT_THR:
-                    node.sane = False
+                    node.confined = False
                     if len(node.loc)==1:
                         ax.scatter(node.loc[0],0., s=5., color='b', marker='x')
                     elif len(node.loc)==2:
                         ax.scatter(node.loc[0],node.loc[1], s=5., color='b', marker='x')
+                else: # if the simulation went out of bounds we don't even need to check the convergence
+                    # Check traj convergence
+                    converged = self.traj_convergence(node)
+                    if not converged:
+                        print(node.identity, ': this node trajectory was not converged, the simulation will be repeated.')
+                        node.converged = False
+                        if len(node.loc)==1:
+                            ax.scatter(node.loc[0],0., s=5., color='purple', marker='x')
+                        elif len(node.loc)==2:
+                            ax.scatter(node.loc[0],node.loc[1], s=5., color='purple', marker='x')
+                    
 
         # Check overlap between point and neighbours in idx to find points for which finer grid is required
         for n,node in enumerate(self.nodes):
@@ -315,9 +366,12 @@ class Layer(object):
                         # - If the node is a virtual benchmark node (by definition sane):
                         #       * if faulty overlap replace by RealizedBenchmarkNode (perform a simulation at that location instead)
 
-
                         if isinstance(self.nodes[neighbour],Node) and self.nodes[neighbour].sane:
-                            self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
+                            # first check if the overlap between these two nodes has already been checked
+                            if n > neighbour:
+                                self.overlap[n,m] = self.overlap[neighbour,self.nodes[neighbour].neighbours.index(n)]
+                            else:
+                                self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
 
                         elif isinstance(self.nodes[neighbour],RealizedBenchmarkNode) and self.nodes[neighbour].sane:
                             self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
@@ -352,7 +406,7 @@ class Layer(object):
                                 ax.plot((node.loc[0],self.nodes[neighbour].loc[0]),
                                         (node.loc[1],self.nodes[neighbour].loc[1]), color='r', lw=0.3)
 
-        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5),frameon=False)
         fig.savefig('overlap_{}.pdf'.format(self.index),bbox_inches='tight')
         return
 
@@ -467,11 +521,12 @@ class Layer(object):
                     # Create a SuperlayerBenchmarkNode
                     sln = SuperlayerBenchmarkNode(self, self.nodes[idx])
 
-                    # If the SuperlayerBenchmarkNode is sane in the sublayer add it, else create a RealizedBenchmarkNode at that location
+                    # If the SuperlayerBenchmarkNode is sane in the sublayer add it, else create a RealizedBenchmarkNode at that location with increased kappa
                     if sln.sane:
                         self.sublayer_nodes.append(sln)
                     else:
-                        self.sublayer_nodes.append(RealizedBenchmarkNode(NewNode(sln.loc,sln.kappas)))
+                        increased_kappas = np.clip(sln.kappas*self.grid.KAPPA_GROWTH_FACTOR,0,self.grid.MAX_KAPPA)
+                        self.sublayer_nodes.append(RealizedBenchmarkNode(NewNode(sln.loc,increased_kappas)))
 
 
         if dims[1]>0:
