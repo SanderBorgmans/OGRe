@@ -53,12 +53,12 @@ if __name__ == "__main__":
         parser.add_option("--timecon_thermo",
                     action="store", type="str", dest="timecon_thermo", help="timeconstant for the thermostat (in arbitrary units) [default: %default]", default="100")
         
-        parser.add_option("--KEEP_DEVIANTS",
-                action="store", type="bool", dest="KEEP_DEVIANTS", help="whether to keep deviant trajectories for the free energy analysis [default: %default]", default=True)
         parser.add_option("--CONFINEMENT_THR",
                 action="store", type="float", dest="CONFINEMENT_THR", help="minimal percentage of the simulation that should be contained in the hypervolume defined by all the surrounding grid points to be considered as non-deviating [default: %default]", default=0.3)
         parser.add_option("--OVERLAP_THR",
                     action="store", type="float", dest="OVERLAP_THR", help="minimal percentage for the overlap of the histograms of two neighbouring trajectories [default: %default]", default=0.3)
+        parser.add_option("--JS_THR",
+                    action="store", type="float", dest="JS_THR", help="threshold for jensen shannon divergence between first and second half of trajectory for convergence check")
         parser.add_option("--KAPPA_GROWTH_FACTOR",
                     action="store", type="float", dest="KAPPA_GROWTH_FACTOR", help="factor by which the kappa value is multiplied if the trajectory is deviating [default: %default]", default=2.0)
         parser.add_option("--MAX_LAYERS",
@@ -113,6 +113,8 @@ if __name__ == "__main__":
                     action="store", type="float", dest="CONFINEMENT_THR", help="minimal percentage of the simulation that should be contained in the hypervolume defined by all the surrounding grid points to be considered as non-deviating [default: %default]", default=0.3)
         parser.add_option("--OVERLAP_THR",
                     action="store", type="float", dest="OVERLAP_THR", help="minimal percentage for the overlap of the histograms of two neighbouring trajectories [default: %default]", default=0.3)
+        parser.add_option("--JS_THR",
+                    action="store", type="float", dest="JS_THR", help="threshold for jensen shannon divergence between first and second half of trajectory for convergence check")
         parser.add_option("--KAPPA_GROWTH_FACTOR",
                     action="store", type="float", dest="KAPPA_GROWTH_FACTOR", help="factor by which the kappa value is multiplied if the trajectory is deviating [default: %default]", default=2.0)
         parser.add_option("--MAX_LAYERS",
@@ -128,4 +130,4 @@ if __name__ == "__main__":
 
     # Copy the grid00.txt file to run.txt
     from shutil import copyfile
-    copyfile('grid00.txt', 'run.txt') # create initial run file
+    copyfile('layer00.txt', 'run.txt') # create initial run file

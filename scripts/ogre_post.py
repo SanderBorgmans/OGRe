@@ -9,11 +9,11 @@ parser = OptionParser(usage="Usage: %prog [<options>]")
 parser.add_option("--refresh",
           action="store_true", dest="refresh", help="perform a clean run [default: %default]", default=False)
 parser.add_option("--overlap",
-          action="store_true", dest="overlap", help="only perform the overlap analysis, debugging purposes [default: %default]", default=False)
+          action="store_true", dest="overlap", help="perform the overlap analysis [default: %default]", default=False)
 parser.add_option("--fes",
-          action="store_true", dest="fes", help="construct the FES for the subsequent refinements [default: %default]", default=False)
-parser.add_option("--test",
-          action="store_true", dest="test", help="perform the overlap analysis, without creating/changing/removing any files [default: %default]", default=False)
+          action="store_true", dest="fes", help="calculate the FES [default: %default]", default=False)
+parser.add_option("--debug",
+          action="store_true", dest="debug", help="perform the overlap analysis, without creating/changing/removing any files [default: %default]", default=False)
 parser.add_option("--fes_index",
           action="store", type="int", dest="fes_index", help="number of grid iterations to take into account [default: %default]", default=0)
 parser.add_option("--plot_deviating",
@@ -47,7 +47,7 @@ if options.refresh or options.overlap:
 
 if options.overlap:
     # Check overlap and generate fine grid if necessary
-    investigate_overlap(data,test=options.test)
+    investigate_overlap(data,debug=options.debug)
 
 if options.fes:
     if options.fes_index==0:

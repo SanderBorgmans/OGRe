@@ -16,6 +16,10 @@ if __name__ == "__main__":
               action="store", type="int", dest="grid")
     parser.add_option("--nr",
               action="store", type="int", dest="nr")
+    parser.add_option("--potential",
+              action="store", type="str", dest="potential")
+    parser.add_option("--custom_cv",
+              action="store", type="str", dest="custom_cv")
     (options, args) = parser.parse_args(sys.argv[1:])
 
     # Load data file
@@ -24,33 +28,14 @@ if __name__ == "__main__":
             data = yaml.full_load(f)
     else:
         raise AssertionError('There was no data file!')
-
-    # Load cvs and kappas from relevant grid file
-    fname = 'grid{0:0=2d}.txt'.format(options.grid)
-    grid = np.genfromtxt(fname, delimiter=',',dtype=None,skip_header=1)
-    if grid.size==1: # problem with single line files
-        grid = np.array([grid])
     
-    point = grid[options.nr]
-    assert point[0]==options.grid
-    assert point[1]==options.nr
-
-    if isinstance(point[2],float):
-        cvs = np.array([point[2]])
-    else:
-        cvs = np.array([float(p) for p in point[2].decode().split('*')])
-
-    # Define kappas
-    if isinstance(point[3],float):
-        kappas = np.array([point[3]])
-    else:
-        kappas = np.array([float(k) for k in point[3].decode().split('*')])
-
+    if not hasattr(options, 'potential'): options.potential = './potential.py'
+    if not hasattr(options, 'custom_cv'): options.custom_cv = './custom_cv.py'
 
     if data['mode'] == 'analytic':
-        sim = OGRe_Simulation(options.grid,options.nr,cvs,kappas,input=data,potential='./potential.py')
+        sim = OGRe_Simulation(options.grid,options.nr,input=data,potential=options.potential)
     elif data['mode'] == 'application':
-        sim = OGRe_Simulation(options.grid,options.nr,cvs,kappas,input=data,custom_cv='./custom_cv.py')
+        sim = OGRe_Simulation(options.grid,options.nr,input=data,custom_cv=options.custom_cv)
     else:
         raise ValueError('An invalid mode was selected for terminal based use of OGRe.')
     sim.simulate()
