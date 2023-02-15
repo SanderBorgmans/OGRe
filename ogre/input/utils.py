@@ -13,6 +13,7 @@ __all__ = ['OGRe_Input']
 
 warnings.filterwarnings('ignore')
 
+
 def save2yaml(options,mode=None):
     d = vars(options)
     d = copy.deepcopy(d) # such that removing things from the dict do not affect options
@@ -88,7 +89,6 @@ class OGRe_Input(object):
                 timeconstant of the barostat (in atomic units)
 
             **Hyperparameters** - see readme
-                KEEP_DEVIANTS [default=True]
                 CONFINEMENT_THR [default=0.3]
                 OVERLAP_THR [default=0.3]
                 KAPPA_GROWTH_FACTOR [default=2]
@@ -118,10 +118,7 @@ class OGRe_Input(object):
                 raise ValueError('No force field files found!')
 
 
-        # SIMULATION PARAMETERS (others default values are assigned in sim/core.py)
-        if not hasattr(self,'mdsteps'):
-            self.mdsteps = 5000 # no run up by default
-
+        # SIMULATION PARAMETERS (other default values are assigned in sim/core.py)
         if not hasattr(self,'runup'):
             self.runup = 0 # no run up by default
 
@@ -151,8 +148,8 @@ class OGRe_Input(object):
             cv_units = get_cv_units(vars(self))
             assert cv_units[0]==cv_units[1]
             rvecs = chk['rvecs']/cv_units[0] # assume rvecs are in atomic units
+            self.rvecs = rvecs # store rvecs in input class
             edges = get_edges(rvecs) 
-            self.rvecs = rvecs
             self.edges = {'min' : [float(edges[0]),float(edges[2])], 'max' : [float(edges[1]),float(edges[3])]}
 
         # Convert edges to dictionary for easy parsing
@@ -164,9 +161,6 @@ class OGRe_Input(object):
         # HYPERPARAMETERS
         if not hasattr(self,'plot'):
             self.plot = True
-
-        if not hasattr(self,'KEEP_DEVIANTS'):
-            self.KEEP_DEVIANTS = True
 
         if not hasattr(self,'CONFINEMENT_THR'):
             self.CONFINEMENT_THR = 0.3
@@ -238,7 +232,7 @@ def make_path(min,max):
     return Path.Path(sort_vertices(vertices), closed=True)
 
 def get_edges(rvecs):
-    _,path = wigner_seitz_cell(rvecs[0:2,0:2],False)
+    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],False)
     vertices = path.vertices
     return [np.min(vertices[:,0]),np.max(vertices[:,0]),np.min(vertices[:,1]),np.max(vertices[:,1])]
 
@@ -253,6 +247,10 @@ def write_grid(points,options,plot,path):
         f.write('layer,nr,cvs,kappas,type\n')
         for n,point in enumerate(points):
             f.write('{},{},{},{},{}\n'.format(0,n, '*'.join(['{:.8f}'.format(p) for p in point]), '*'.join(['{:.8e}'.format(k) for k in options.kappas]), 'new_node')) # use * as separator
+
+     # Copy the layer00.txt file to run.txt
+    from shutil import copyfile
+    copyfile('layer00.txt', 'run.txt') # create initial run file
 
     if plot:
         if points.shape[1] > 2:
