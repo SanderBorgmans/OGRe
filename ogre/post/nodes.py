@@ -15,7 +15,6 @@ class Node(object):
         self.identity = identity
         self.neighbours = []
         self.extreme_kappa = False
-        #self.sane = True 
         self.converged = True
         self.confined = True
         self.consistent = True
@@ -31,14 +30,14 @@ class Node(object):
 
     @property
     def type(self):
-        if not self.converged:
+        """if not self.converged:
             self._type = 'non_converged_node'
-        else:
-            self._type = 'node' if self.sane else 'deviant_node'
+        else:"""
+        self._type = 'node' if self.sane else 'deviant_node'
         return self._type
 
     def node_info(self,identity=None,grid=None):
-        if self.confined and self.consistent:
+        if self.confined and self.converged and self.consistent:
             kappas = self.kappas
         else:
             kappas = np.clip(self.kappas*grid.KAPPA_GROWTH_FACTOR,0,grid.MAX_KAPPA)
@@ -162,9 +161,9 @@ class RealizedBenchmarkNode(BenchmarkNode):
     def type(self):
         self._type = 'realized_benchmark_node' if self.sane else 'deviant_realized_benchmark_node'
         # Overwrite if the underlying node is not converged
-        if isinstance(self.node,Node):
-            if not self.node.converged:
-                self._type = 'non_converged_realized_benchmark_node'
+        #if isinstance(self.node,Node):
+        #    if not self.node.converged:
+        #        self._type = 'non_converged_realized_benchmark_node'
         return self._type
 
     @property
@@ -182,19 +181,3 @@ class RealizedBenchmarkNode(BenchmarkNode):
         # Update type to benchmark type
         reference_node_info[-1] = self.type.encode()
         return reference_node_info
-
-        """if self.confined:
-            kappas = self.kappas
-        else:
-            kappas = np.clip(self.kappas*grid.KAPPA_GROWTH_FACTOR,0,grid.MAX_KAPPA)
-
-        if self.identity is None:
-            assert identity is not None
-            identity = parse_identity(identity)
-            self.identity = identity
-
-        return np.array([self.identity[0], self.identity[1],
-                    "*".join(['{:.8f}'.format(p) for p in self.loc]).encode(),
-                    "*".join(['{:.8e}'.format(kappa) for kappa in kappas]).encode(),
-                    self.type.encode()
-                    ],dtype=object)"""

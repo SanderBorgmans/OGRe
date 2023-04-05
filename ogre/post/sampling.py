@@ -29,7 +29,6 @@ class Grid:
         self.RUN_UP_TIME          = self.data['runup']                if 'runup'                in self.data else 0
         self.MAX_LAYERS           = self.data['MAX_LAYERS']           if 'MAX_LAYERS'           in self.data else 1
         self.CONFINEMENT_THR      = self.data['CONFINEMENT_THR']      if 'CONFINEMENT_THR'      in self.data else 0.30
-        self.CONSISTENCY_THR      = self.data['CONSISTENCY_THR']      if 'CONSISTENCY_THR'      in self.data else None
         self.JS_THR               = self.data['JS_THR']               if 'JS_THR'               in self.data else None
         self.OVERLAP_THR          = self.data['OVERLAP_THR']          if 'OVERLAP_THR'          in self.data else 0.30
         self.KAPPA_GROWTH_FACTOR  = self.data['KAPPA_GROWTH_FACTOR']  if 'KAPPA_GROWTH_FACTOR'  in self.data else 2.
@@ -38,7 +37,8 @@ class Grid:
         self.PLOT_CON             = self.data['plot_con']             if 'plot_con'             in self.data else False
         self.PLOT_OVERLAP         = self.data['plot_overlap']         if 'plot_overlap'         in self.data else False
         self.PLOT_CONSISTENT      = self.data['plot_consistent']      if 'plot_consistent'      in self.data else False
-        
+        self.CONSISTENCY_THR      = self.data['CONSISTENCY_THR']      if 'CONSISTENCY_THR'      in self.data else None
+        self.report_consistency   = self.data['report_consistency']   if 'report_consistency'   in self.data else False
 
         # Load up other data variables which are required
         self.edges = self.data['edges']
@@ -59,7 +59,6 @@ class Grid:
         if self.CONSISTENCY_THR is not None:
             from ogre.post.fes import generate_fes
             self.fes = generate_fes(self.data,interactive=True,error_estimate=None) # we do not need error estimate for this
-
 
     def refine(self):
         for idx in self.layer_idx:
@@ -97,6 +96,13 @@ class Grid:
             
         # Write a single data file with all the points which have to be simulated from all layers
         grid_utils.format_layer_files(self.data,debug=self.debug)
+
+        # If there are extreme kappa nodes, let the user know
+        for idx in self.layer_idx:
+            if not idx in self.layer_dictionary.keys(): continue
+            if any([node.extreme_kappa for node in self.layer_dictionary[idx].nodes if isinstance(node,Node)]):
+                with open('extreme_kappas','w') as f:
+                    pass # the file does not need any input
 
 
     @staticmethod
@@ -161,7 +167,7 @@ class Grid:
                     tmp_node.converged = converged
                     
                     if not tmp_node.converged:
-                        print(tmp_node.identity, ': this benchmark node requires a new simulation.')
+                        print(tmp_node.identity, ': (benchmark) was not converged, try a longer run time, or a higher kappa to increase convergence.')
 
 
                 # although unlikely, we should check whether a deviant benchmark node would cross the max_kappa
@@ -170,6 +176,7 @@ class Grid:
                     tmp_node.set_extreme_kappa(self.MAX_KAPPA,self.KAPPA_GROWTH_FACTOR)
                     if tmp_node.extreme_kappa:
                         tmp_node.confined = True
+                        tmp_node.converged = True
                         print('A benchmark node at {} tried to increase its kappa value above the allowed value. Setting sanity to True ...'.format(",".join(['{:.8f}'.format(p) for p in tmp_node.loc])))
 
                 # identify the simulation with a node from the superlayer.sublayer_nodes and replace it before it gets added below
@@ -228,7 +235,7 @@ class Layer(object):
         """
         This tests whether the PDFs of the first half and the second half of the trajectory are consistent enough as a convergence check
         """
-        if self.grid.JS_THR is None:
+        if self.grid.CONVERGENCE_THR is None:
             return True
 
         trajs=node.trajs
@@ -242,15 +249,22 @@ class Layer(object):
                                                                  self.grid.edges['max'][i]+self.grid.spacings[i]) for i in range(t.shape[1])], density=True)
         h2, _ = np.histogramdd(t[len(t)//2:], bins=bins, range=[(self.grid.edges['min'][i]-self.grid.spacings[i],
                                                                  self.grid.edges['max'][i]+self.grid.spacings[i]) for i in range(t.shape[1])], density=True)
-        return jensenshannon(h1,h2)**2 < self.grid.JS_THR
+        
+        convergence = (1-jensenshannon(h1.ravel(),h2.ravel(),base=2)**2)
+        converged = convergence >= self.grid.CONVERGENCE_THR
+        if not converged:
+            print(node.identity, ': was not converged ({}<{}), try a longer run time, or a higher kappa to increase convergence.'.format(np.round(convergence,2),self.grid.CONVERGENCE_THR))
+
+        return converged
+
     
     def consistency_check(self,node):
         """
         This tests whether the trajectory data is consistent with the underlying FES
         """
-        if self.grid.CONSISTENCY_THR is None:
+        if self.grid.CONSISTENCY_THR is None or self.grid.fes is None:
             return True
-        
+                
         beta = 1/(boltzmann*self.grid.data['temp']*kelvin/self.grid.fes_unit)
 
         trajs=node.trajs
@@ -274,18 +288,23 @@ class Layer(object):
         h1, edges = np.histogramdd(t, bins=bin_edges, density=True)
 
         h1 = h1/np.sum(h1)
-        density_biased_prob = biased_prob/np.sum(biased_prob)
+        density_biased_prob = np.round(biased_prob/np.sum(biased_prob),20)
 
         # Calculate consistency
-        consistent = (1 - jensenshannon(density_biased_prob, h1, base=2)**2) >= self.grid.CONSISTENCY_THR
+        consistency = (1 - jensenshannon(density_biased_prob.ravel(), h1.ravel(), base=2)**2)
+        consistent =  consistency >= self.grid.CONSISTENCY_THR
+
+        if self.grid.report_consistency:
+            print(node.identity, consistency)
 
         if self.grid.PLOT_CONSISTENT: # and not consistent:
             fig = pt.figure()
             ax = fig.gca()
             grid_utils.plot_ref_grid(ax,self,size=50.0,show_deviants=False) 
-            grid_utils.plot_consistency(ax, node, edges, h1, density_biased_prob, bin_widths)
-            title = "Consistent = {}".format(consistent)
+            grid_utils.plot_consistency(ax, node, edges, h1, density_biased_prob, bin_widths, self.steps)
+            title = "Consistent = {}, {}".format(consistent, consistency)
             fig.suptitle(title)
+            #pt.show()
             fig.savefig('consistency_{}.pdf'.format("-".join([str(i) for i in node.identity])),bbox_inches='tight')
             
         return consistent
@@ -308,13 +327,14 @@ class Layer(object):
         confinement = sum(mask)/float(len(mask))
         sane = confinement >= self.grid.CONFINEMENT_THR
 
-        if self.grid.PLOT_CON and plot: # and not sane:
+        if self.grid.PLOT_CON and plot: #and not sane:
             fig = pt.figure()
             ax = fig.gca()
             grid_utils.plot_ref_grid(ax,self,size=50.0,show_deviants=False) 
             grid_utils.plot_dev(ax, node, t, self.steps, self)
             title = "Sanity = {:4.3f}".format(confinement)
             fig.suptitle(title)
+            #pt.show()
             fig.savefig('confinement_{}.pdf'.format("-".join([str(i) for i in node.identity])),bbox_inches='tight')
             
         return sane
@@ -352,7 +372,9 @@ class Layer(object):
             ax = fig.gca()
             grid_utils.plot_ref_grid(ax,self,size=10.0,show_deviants=False) 
             grid_utils.plot_overlap(ax, node1, node2, t1, trajs2, self.steps, self)
+            #fig.legend()
             fig.suptitle("Overlap = {:4.3f}".format(overlap))
+            #pt.show()
             fig.savefig('overlap_{}_{}.pdf'.format("-".join([str(i) for i in node1.identity]),"-".join([str(i) for i in node2.identity])),bbox_inches='tight')
         return overlap
 
@@ -364,35 +386,7 @@ class Layer(object):
         for n,node in enumerate(self.nodes):
             node.neighbours = neighbours[n]
 
-
-    def refine_layer(self):
-        """
-            Check overlap for layer.
-            The plot functionality only works for ND grids with N < 3
-        """
-        # Assign al nearest neighbours
-        self.characterize_nodes()
-        self.overlap = np.ones((len(self.nodes),2*len(self.steps)), dtype=bool) # default everything overlaps
-
-        if len(self.steps) == 1:
-            fig = pt.figure('check_overlap',figsize=((self.index+1)*4,2))
-            pt.tick_params(
-            axis='y',          # changes apply to the x-axis
-            which='both',      # both major and minor ticks are affected
-            left=False,        # ticks along the left edge are off
-            right=False,       # ticks along the right edge are off
-            labelleft=False)  # labels along the left edge are off
-        elif len(self.steps) == 2:
-            fig = pt.figure('check_overlap',figsize=((self.index+1)*2,(self.index+1)*2))
-        else:
-            fig = pt.figure('check_overlap')
-            print("Plotting the overlap data is not implemented for more than 2 dimension!")
-        ax = fig.gca()
-
-        # Plot all previous grids as a reference for this grid
-        grid_utils.plot_ref_grid(ax,self,size=1.)
-        pt.close('check_overlap') # make sure this does not get plotted somewhere
-
+    def sanity_analysis(self,ax):
         # Check Node confinement, convergence, and consistency
         for n,node in enumerate(self.nodes):
             if isinstance(node, Node) and not node.extreme_kappa:
@@ -408,25 +402,35 @@ class Layer(object):
                     # Check traj convergence
                     converged = self.convergence_check(node)
                     if not converged:
-                        print(node.identity, ': this node trajectory was not converged, the simulation will be repeated.')
                         node.converged = False
                         if len(node.loc)==1:
                             ax.scatter(node.loc[0],0., s=5., color='purple', marker='x')
                         elif len(node.loc)==2:
                             ax.scatter(node.loc[0],node.loc[1], s=5., color='purple', marker='x')
-                    else:
-                        # Check traj consistency by considering the expected PDF versus the sampled PDF
-                        # When the biased FES contains multiple minima, separated by unsurmountable barriers,
-                        # and the trajectory only samples a single minimum, the kappa value should be increased
-                        # until only a single minimum remains
-                        consistent = self.consistency_check(node)
-                        if not consistent:
-                            node.consistent = False
-                            if len(node.loc)==1:
-                                ax.scatter(node.loc[0],0., s=5., color='pink', marker='x')
-                            elif len(node.loc)==2:
-                                ax.scatter(node.loc[0],node.loc[1], s=5., color='pink', marker='x')
-                    
+
+    def consistency_analysis(self,ax):
+        all_consistent = True
+        for n,node in enumerate(self.nodes):
+            if isinstance(node, Node) and not node.extreme_kappa:
+                if node.sane:
+                    # Check traj consistency by considering the expected PDF versus the sampled PDF
+                    # When the biased FES contains multiple minima, separated by unsurmountable barriers,
+                    # and the trajectory only samples a single minimum, the kappa value should be increased
+                    # until only a single minimum remains
+                    consistent = self.consistency_check(node)
+                    if not consistent:
+                        all_consistent = False
+                        print(node.identity, ': this node trajectory was not consistent')
+                        node.consistent = False
+                        if len(node.loc)==1:
+                            ax.scatter(node.loc[0],0., s=5., color='pink', marker='x')
+                        elif len(node.loc)==2:
+                            ax.scatter(node.loc[0],node.loc[1], s=5., color='pink', marker='x')
+
+        return all_consistent
+
+    def overlap_analysis(self,ax):
+        self.overlap = np.ones((len(self.nodes),2*len(self.steps)), dtype=bool) # default everything overlaps
 
         # Check overlap between point and neighbours in idx to find points for which finer grid is required
         for n,node in enumerate(self.nodes):
@@ -492,7 +496,50 @@ class Layer(object):
                                         (node.loc[1],self.nodes[neighbour].loc[1]), color='r', lw=0.3)
 
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5),frameon=False)
-        fig.savefig('overlap_{}.pdf'.format(self.index),bbox_inches='tight')
+        ax.get_figure().savefig('overlap_{}.pdf'.format(self.index),bbox_inches='tight')
+
+
+    def refine_layer(self):
+        """
+            Check overlap for layer.
+            The plot functionality only works for ND grids with N < 3
+        """
+        # Assign al nearest neighbours
+        self.characterize_nodes()
+
+        # Set up figures
+        if len(self.steps) == 1:
+            fig = pt.figure('check_overlap',figsize=((self.index+1)*4,2))
+            pt.tick_params(
+            axis='y',          # changes apply to the x-axis
+            which='both',      # both major and minor ticks are affected
+            left=False,        # ticks along the left edge are off
+            right=False,       # ticks along the right edge are off
+            labelleft=False)  # labels along the left edge are off
+        elif len(self.steps) == 2:
+            fig = pt.figure('check_overlap',figsize=((self.index+1)*2,(self.index+1)*2))
+        else:
+            fig = pt.figure('check_overlap')
+            print("Plotting the overlap data is not implemented for more than 2 dimension!")
+        ax = fig.gca()
+
+        # Plot all previous grids as a reference for this grid
+        grid_utils.plot_ref_grid(ax,self,size=1.)
+        pt.close('check_overlap') # make sure this does not get plotted somewhere
+
+        # Sanity analysis
+        self.sanity_analysis(ax)
+
+        if self.grid.CONSISTENCY_THR is not None:
+            # Consistency analysis
+            consistent = self.consistency_analysis(ax)
+
+            # If there are any inconsistencies the refinement should stop here
+            if not consistent: return
+
+        # Overlap analysis
+        self.overlap_analysis(ax)
+        
         return
 
     def generate_sublayer(self):
@@ -612,7 +659,6 @@ class Layer(object):
                     else:
                         increased_kappas = np.clip(sln.kappas*self.grid.KAPPA_GROWTH_FACTOR,0,self.grid.MAX_KAPPA)
                         self.sublayer_nodes.append(RealizedBenchmarkNode(NewNode(sln.loc,increased_kappas)))
-
 
         if dims[1]>0:
             for node in virtual_benchmark_nodes:

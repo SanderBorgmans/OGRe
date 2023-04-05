@@ -1,5 +1,5 @@
 #! /usr/bin/python
-import copy,warnings
+import copy,warnings,os
 import numpy as np
 from molmod.units import *
 
@@ -27,7 +27,7 @@ def generate_fes(data, interactive=False, error_estimate=None, **params):
 
 import thermolib
 
-def generate_fes_thermolib(data,interactive=False,index=None,error_estimate='mle_f',suffix=None):
+def generate_fes_thermolib(data,indices=None,interactive=False,index=None,error_estimate='mle_f',suffix=None):
         """
             Calculate and plot the free energy profile
             * Arguments 
@@ -39,13 +39,17 @@ def generate_fes_thermolib(data,interactive=False,index=None,error_estimate='mle
 
         """
         # Generate the required colvars and metadata file
-        locations, trajs, kappas, _, _ = grid_utils.load_grid(data,index,verbose=False)
+        locations, trajs, kappas, identities, _ = grid_utils.load_grid(data,index,verbose=False)
         cv_units = get_cv_units(data)
         fes_unit = eval(data['fes_unit'])
         edges = { k:copy.copy(np.array(v)*cv_units) for k,v in data['edges'].items() }
         spacings = data['spacings'] * cv_units
         steps = data['HISTOGRAM_BIN_WIDTHS']
         temp = data['temp'] if 'temp' in data else 300.*kelvin
+
+        # Adapt edges, extend range by at two spacings for sufficient leeway
+        edges['max'] += spacings
+        edges['min'] -= spacings
 
         if not 'temp' in data:
             warnings.warn('No temperature (temp) attribute was found in the data.yml file. Taking 300 K as a default value.')
@@ -54,12 +58,21 @@ def generate_fes_thermolib(data,interactive=False,index=None,error_estimate='mle
         rtrajs = np.zeros((0,*trajs[0][:,data['runup']:].shape[1:]))
         rlocations = np.zeros((0,*locations[0].shape[1:]))
         rkappas = np.zeros((0,*kappas[0].shape[1:]))
+        ridentities = []
         for key in locations.keys():
             rtrajs = np.vstack((rtrajs,trajs[key][:,data['runup']:]))
             rlocations = np.vstack((rlocations,locations[key]))
             rkappas = np.vstack((rkappas,kappas[key]))
+            ridentities += list(identities[key])
 
         #print("The full trajectories shape taken into account is: ", rtrajs.shape)
+        # Account for possible indices
+        if indices is not None:
+            idx = np.array([i for i,id in enumerate(ridentities) if id in indices])
+            #print(idx)
+            rtrajs = rtrajs[idx]
+            rkappas = rkappas[idx]
+            rlocations = rlocations[idx]
 
         # Convert rlocations and rkappas to atomic units
         rkappas *= 1/cv_units**2 # energy unit remains fes_unit (since thermolib works with kjmol wham units for kappa, no conversion is performed)
@@ -87,11 +100,11 @@ def generate_fes_thermolib(data,interactive=False,index=None,error_estimate='mle
             
             try:
                 hist = thermolib.Histogram1D.from_wham_c(bin_edges[0], trajectories, biasses, temp, error_estimate=error_estimate,
-                                        verbosity='low', convergence=1e-7, Nscf=10000)
+                                        verbosity='none', convergence=1e-7, Nscf=100000)
             except FloatingPointError:
                 error_estimate=None
                 hist = thermolib.Histogram1D.from_wham_c(bin_edges[0], trajectories, biasses, temp, error_estimate=error_estimate,
-                                        verbosity='low', convergence=1e-7, Nscf=10000)
+                                        verbosity='none', convergence=1e-7, Nscf=100000)
                                         
             fes = thermolib.BaseFreeEnergyProfile.from_histogram(hist, temp)
             fes.set_ref(ref='min')
@@ -107,7 +120,7 @@ def generate_fes_thermolib(data,interactive=False,index=None,error_estimate='mle
             _, biasses, trajectories = thermolib.read_wham_input_2D(filename, path_template_colvar_fns='%s', stride=1, verbose=False)
 
             hist = thermolib.Histogram2D.from_wham_c(bin_edges, trajectories, biasses, temp, error_estimate=error_estimate,
-                                        verbosity='low', convergence=1e-7, Nscf=10000, overflow_threshold=1e-150)
+                                        verbosity='none', convergence=1e-7, Nscf=10000, overflow_threshold=1e-150)
 
             fes = thermolib.FreeEnergySurface2D.from_histogram(hist, temp)
             fes.set_ref(ref='min')
@@ -121,6 +134,9 @@ def generate_fes_thermolib(data,interactive=False,index=None,error_estimate='mle
         else:
             raise NotImplementedError('Thermolib does not support N-dim free energy evaluation at this point.')
         
+        # Remove the colvar and metadate files - (remove these lines for the final script)
+        grid_utils.remove_colvars(filename)
+        
         grid = grid/cv_units
         fes_array = fes_array/fes_unit
         fes_err = fes_err/fes_unit
@@ -128,6 +144,7 @@ def generate_fes_thermolib(data,interactive=False,index=None,error_estimate='mle
         # If this function runs interactively, return the relevant parameters
         # otherwise save them to disk
         if interactive:
+            grid_utils.write_fes(data,grid,fes_array,index,suffix=suffix,fes_err=fes_err)
             grid_utils.plot_fes(data,grid,fes_array,index,suffix=suffix,fes_err=fes_err)
             return grid,fes_array,fes_err
         else:

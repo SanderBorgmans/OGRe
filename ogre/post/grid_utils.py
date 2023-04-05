@@ -1,5 +1,5 @@
 #! /usr/bin/python
-import os,time,h5py,glob,pickle,sys,warnings
+import os,time,h5py,glob,pickle,sys,warnings,shutil
 import numpy as np
 import matplotlib.pyplot as pt
 import matplotlib.colors as mcolors
@@ -90,6 +90,8 @@ def load_trajs(fname,data,restart,locations,trajs,dkappas,identities,types):
         gr.write('layer,nr,cvs,kappas,type\n')
         gr.write(restart)
         gr.close()
+        print('Some simulations have to be restarted!')
+        sys.exit(0)
         raise ValueError("Some simulations have to be restarted!")
 
 
@@ -222,8 +224,8 @@ def plot_dev(ax, node, traj, steps, layer):
     binwidths = grid.HISTOGRAM_BIN_WIDTHS
     bins = tuple([int(((grid.edges['max'][i]+grid.spacings[i])-(grid.edges['min'][i]-grid.spacings[i]))//binwidths[i]) for i in range(traj.shape[1])])
 
-    h1, edges = np.histogramdd(traj[grid.RUN_UP_TIME:], bins=bins, range=[(grid.edges['min'][i]-grid.spacings[i],
-                                                                           grid.edges['max'][i]+grid.spacings[i]) for i in range(traj.shape[1])], density=True)
+    h1, edges = np.histogramdd(traj[:], bins=bins, range=[(grid.edges['min'][i]-grid.spacings[i],
+                                                           grid.edges['max'][i]+grid.spacings[i]) for i in range(traj.shape[1])], density=True)
 
     if len(node.loc) == 1:
         # (left corner, width, height) histogram starts at 0.1
@@ -247,19 +249,21 @@ def plot_dev(ax, node, traj, steps, layer):
     elif len(node.loc) == 2:
         _,path = wigner_seitz_cell(np.diag(steps*2),False)
         path.vertices += node.loc
-        patch = mpatches.PathPatch(path, facecolor="none", lw=1)
+        patch = mpatches.PathPatch(path, facecolor="none", lw=1, edgecolor='r')
+        h1m =  np.ma.masked_where(h1==0.0,h1)
+        ax.pcolormesh(edges[0], edges[1], h1m.T, cmap='Oranges')
 
-        ax.scatter(traj[:,0],traj[:,1],s=0.1, c='r')
+        #ax.scatter(traj[:,0],traj[:,1],s=0.1, c='r')
         ax.scatter([node.loc[0]],[node.loc[1]],s=20.0,marker='x',c='r')
         ax.add_patch(patch)
-        ax.set_xlim([(node.loc[0]-2*steps[0]),(node.loc[0]+2*steps[0])])
-        ax.set_ylim([(node.loc[1]-2*steps[1]),(node.loc[1]+2*steps[1])])
+        ax.set_xlim([(node.loc[0]-4*steps[0]),(node.loc[0]+4*steps[0])])
+        ax.set_ylim([(node.loc[1]-4*steps[1]),(node.loc[1]+4*steps[1])])
     else:
         raise NotImplementedError("Can't make deviation plots in more than 2 dimensions.")
     
 
 
-def plot_consistency(ax, node, edges, hist_sample, hist_calc, binwidth):
+def plot_consistency(ax, node, edges, hist_sample, hist_calc, binwidth, steps):
     if len(node.loc) == 1:
         # (left corner, width, height) histogram starts at 0.1
         ax.bar(edges[0][:-1],hist_sample,align='edge',width=binwidth,bottom=0.1,edgecolor='k',zorder=-1,label='sampled prob')
@@ -278,8 +282,16 @@ def plot_consistency(ax, node, edges, hist_sample, hist_calc, binwidth):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.spines['left'].set_visible(False)
+    elif len(node.loc) == 2:
+        # for the consistency plot, we will plot the difference, using the limits of the histograms as scale
+        diff = hist_sample-hist_calc
+        diffm =  np.ma.masked_where(diff==0.0,diff)
+        ax.pcolormesh(edges[0], edges[1], diffm.T, cmap='bwr',zorder=-2,vmin=-np.max(hist_sample),vmax=np.max(hist_sample))
+        ax.scatter([node.loc[0]],[node.loc[1]],s=20.0,marker='x',c='r')
+        ax.set_xlim([(node.loc[0]-4*steps[0]),(node.loc[0]+4*steps[0])])
+        ax.set_ylim([(node.loc[1]-4*steps[1]),(node.loc[1]+4*steps[1])])
     else:
-        raise NotImplementedError("Can't make consistency plots in more than 1 dimensions.")
+        raise NotImplementedError("Can't make consistency plots in more than 2 dimensions.")
     
 
     
@@ -321,14 +333,27 @@ def plot_overlap(ax, node1, node2, traj1, trajs2, steps, layer):
 
         
     elif len(node1.loc) == 2:
-        ax.scatter([node1.loc[0]],[node1.loc[1]],s=30.0,marker='x',c='r',label='t1_loc')
-        ax.scatter([node2.loc[0]],[node2.loc[1]],s=30.0,marker='x',c='b',label='t2_loc')
+        ax.scatter([node1.loc[0]],[node1.loc[1]],s=30.0,marker='x',c='r',label='t1_loc',zorder=10)
+        ax.scatter([node2.loc[0]],[node2.loc[1]],s=30.0,marker='x',c='b',label='t2_loc',zorder=10)
+
         if len(trajs2)>1:
             for t2 in trajs2:
                 ax.scatter(t2[0,0],t2[0,1],s=40,marker='x', c='g')#, label='t2')
-        ax.scatter(traj1[:,0],traj1[:,1],s=0.1, c='r')#, label='t1')
-        for t2 in trajs2:
-            ax.scatter(t2[:,0],t2[:,1],s=0.1, c='b')#, label='t2')
+
+        h1m =  np.ma.masked_where(h1==0.0,h1)
+        ax.pcolormesh(edges[0], edges[1], h1m.T, cmap='Reds',alpha=0.5,zorder=-2)
+
+        h2m =  np.ma.masked_where(h2==0.0,h2)
+        ax.pcolormesh(edges[0], edges[1], h2m.T, cmap='Blues',alpha=0.5,zorder=-2)
+
+        hoverlap = np.minimum(h1,h2)
+        h_overlapm = np.ma.masked_where(hoverlap==0.0,hoverlap)
+        ax.pcolormesh(edges[0], edges[1], h_overlapm.T, cmap='Purples',zorder=-1)
+
+        #ax.scatter(traj1[:,0],traj1[:,1],s=0.1, c='r')#, label='t1')
+        #for t2 in trajs2:
+        #    ax.scatter(t2[:,0],t2[:,1],s=0.1, c='b')#, label='t2')
+
         ax.set_xlim([(node1.loc[0]-4*steps[0]),(node1.loc[0]+4*steps[0])])
         ax.set_ylim([(node1.loc[1]-4*steps[1]),(node1.loc[1]+4*steps[1])])
     else:
@@ -661,6 +686,13 @@ def write_colvars(filename,rtrajs,rlocations,rkappas,verbose=True):
             # Write the value of the collective variable and the harmonic spring constant
             g.write('colvars/colvar_{}\t'.format(n) + "\t".join([str(cv) for cv in cvs]) + '\t' + "\t".join([str(kappa) for kappa in kappas]) + '\n')
             
+def remove_colvars(filename):
+    if os.path.exists('colvars/'):
+        shutil.rmtree('colvars')
+
+    if os.path.exists(filename):
+            os.remove(filename)
+
 
 def format_layer_files(data,debug=False,verbose=True):
     if debug: # if debug the user is only interested in the possible outcome
