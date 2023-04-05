@@ -70,3 +70,34 @@ def find_node_index(tree,point):
     ds,idx = tree.query(np.round(point,DECIMALS),1) # Find the point
     return ds<precision, idx
     
+
+def get_grid_edges(grid):
+    """
+    Calculate the edges for each grid point in a grid of coordinates.
+
+    Args:
+        grid (ndarray): An M-dimensional grid of coordinates with shape (N_1, N_2, ..., N_M, M).
+
+    Returns:
+        tuple: A tuple of M ndarrays, where each ndarray represents the one-dimensional
+        grid edges along that dimension.
+    """
+    edges = []
+    width_list = []
+    for dim in range(grid.shape[-1]):
+        # Calculate the edge widths along this dimension
+        widths = np.diff(grid[..., dim], axis=dim).ravel()
+        width = widths[0]
+        # Assume the grid is uniform
+        assert np.allclose(widths,width)
+
+        # Get a single row of the values along this dimension
+        fixed_dims = (0,) * dim + np.index_exp[:] + (0,) * (grid.shape[-1] - dim - 1) + (dim,)
+        row = grid[fixed_dims]
+
+        # Calculate edges
+        dim_edges = np.append(row - width/2.,row[-1]+width/2.)
+        edges.append(dim_edges)
+        width_list.append(width)
+
+    return tuple(edges), width_list

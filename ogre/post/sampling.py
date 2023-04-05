@@ -1,11 +1,11 @@
 #! /usr/bin/python
 import numpy as np
 import matplotlib.pyplot as pt
-import warnings
 
 from scipy.spatial import cKDTree as KDTree # identical to KDTree but a lot faster before v1.6.0 
 from scipy.spatial.distance import jensenshannon
 from molmod.units import *
+from molmod.constants import *
 from ogre.post.sampling_utils import *
 from ogre.post.nodes import *
 from ogre.input.utils import get_cv_units
@@ -29,6 +29,7 @@ class Grid:
         self.RUN_UP_TIME          = self.data['runup']                if 'runup'                in self.data else 0
         self.MAX_LAYERS           = self.data['MAX_LAYERS']           if 'MAX_LAYERS'           in self.data else 1
         self.CONFINEMENT_THR      = self.data['CONFINEMENT_THR']      if 'CONFINEMENT_THR'      in self.data else 0.30
+        self.CONSISTENCY_THR      = self.data['CONSISTENCY_THR']      if 'CONSISTENCY_THR'      in self.data else None
         self.JS_THR               = self.data['JS_THR']               if 'JS_THR'               in self.data else None
         self.OVERLAP_THR          = self.data['OVERLAP_THR']          if 'OVERLAP_THR'          in self.data else 0.30
         self.KAPPA_GROWTH_FACTOR  = self.data['KAPPA_GROWTH_FACTOR']  if 'KAPPA_GROWTH_FACTOR'  in self.data else 2.
@@ -36,11 +37,14 @@ class Grid:
         self.HISTOGRAM_BIN_WIDTHS = self.data['HISTOGRAM_BIN_WIDTHS'] if 'HISTOGRAM_BIN_WIDTHS' in self.data else [spacing/self.MAX_LAYERS/2. for spacing in self.data['spacings']]
         self.PLOT_CON             = self.data['plot_con']             if 'plot_con'             in self.data else False
         self.PLOT_OVERLAP         = self.data['plot_overlap']         if 'plot_overlap'         in self.data else False
+        self.PLOT_CONSISTENT      = self.data['plot_consistent']      if 'plot_consistent'      in self.data else False
+        
 
         # Load up other data variables which are required
         self.edges = self.data['edges']
         self.spacings = self.data['spacings']
         self.cv_units = get_cv_units(self.data)
+        self.fes_unit = eval(self.data['fes_unit'])
 
         # Load simulation data
         locations, trajs, kappas, identities, types = grid_utils.load_grid(self.data)
@@ -50,25 +54,42 @@ class Grid:
         self.identities = identities
         self.types = types
 
+        # Init FES property which can be used as consistency check
+        self.fes = None
+        if self.CONSISTENCY_THR is not None:
+            from ogre.post.fes import generate_fes
+            self.fes = generate_fes(self.data,interactive=True,error_estimate=None) # we do not need error estimate for this
+
 
     def refine(self):
         for idx in self.layer_idx:
+            if self.layer_dictionary[idx-1] is not None and len(self.layer_dictionary[idx-1].sublayer_nodes)==0:
+                break
+
             # Create layer object
             layer = self.create_layer(idx)
             layer.check_extreme_kappa()
 
             # Check overlap and create finer grid with corresponding reference points
             layer.refine_layer()
+
+            # Check whether the layer contains inconsistent nodes, if so, refrain from refining any lower lying layers
+            # until this is resolved
+            if not layer.check_consistent():
+                print('Halting refinement as some nodes in layer {} are not consistent, which will impact further refinement of their environment.'.format(idx))
+                self.layer_dictionary[idx] = layer
+                return # stop the grid refinement immediately
+
             layer.generate_sublayer() # create additional grid points (and refine confinement for those with deviating trajectories)
             layer.cut_edges() # throw away points generated outside fringe
             
             # Save this layer object
-            self.layer_dictionary[idx] = layer
-        
+            self.layer_dictionary[idx] = layer        
     
     def output(self):
         # Write the layer information and create nice plots as a visualization of this information
         for idx in self.layer_idx:
+            if not idx in self.layer_dictionary.keys(): continue
             if self.debug:
                 grid_utils.dump_layer(self.layer_dictionary[idx])
             grid_utils.plot_layer(self.layer_dictionary[idx])
@@ -119,7 +140,10 @@ class Grid:
 
                 # also alter these in the sublayer of the superlayer
                 if superlayer is not None:
+                    #print(point, np.asarray([node.loc for node in superlayer.sublayer_nodes]))
                     rn_idx = self.get_node_from_nodes(tree,point)
+                    if rn_idx is None:
+                        continue
                     superlayer.sublayer_nodes[rn_idx] = Node(point,self.trajs[index][n],self.kappas[index][n],self.identities[index][n])
 
             # CASE 2: the node is a benchmark node, and needs to be updated, i.e. a (deviant) realized benchmark node
@@ -129,9 +153,9 @@ class Grid:
 
                 # check the sanity of the new node
                 tmp_node = Node(point,self.trajs[index][n],self.kappas[index][n],self.identities[index][n])
-                confinement = superlayer.traj_confinement(tmp_node,factor=2.,plot=False) # choosing a factor 2 effectively checks confinement for current layer
-                converged = superlayer.traj_convergence(tmp_node) 
-                tmp_node.confined = confinement>=self.CONFINEMENT_THR
+                confined = superlayer.sanity_check(tmp_node,factor=2.,plot=False) # choosing a factor 2 effectively checks confinement for current layer
+                converged = superlayer.convergence_check(tmp_node) 
+                tmp_node.confined = confined
 
                 if tmp_node.confined:
                     tmp_node.converged = converged
@@ -170,7 +194,7 @@ class Grid:
                 if isinstance(node,BenchmarkNode):
                     nodes.append(node)
 
-        return Layer(self,index,nodes,steps)
+        return Layer(self,index,nodes,steps) 
 
 
 class Layer(object):
@@ -191,15 +215,18 @@ class Layer(object):
                 if isinstance(node, Node):
                     node.set_extreme_kappa(self.grid.MAX_KAPPA, self.grid.KAPPA_GROWTH_FACTOR)
 
+    def check_consistent(self):
+        return all([node.consistent for node in self.nodes if isinstance(node,Node)])
+
     def cut_edges(self):
         edges = self.grid.edges
         spacings = self.grid.spacings
         for i,_ in enumerate(spacings):
             self.sublayer_nodes = [node for node in self.sublayer_nodes if node.loc[i] <= edges['max'][i]+precision and node.loc[i] >= edges['min'][i]-precision]
 
-    def traj_convergence(self,node):
+    def convergence_check(self,node):
         """
-        This tests whether the PDFs of the first half and the second half of the trajectory are consistent enough
+        This tests whether the PDFs of the first half and the second half of the trajectory are consistent enough as a convergence check
         """
         if self.grid.JS_THR is None:
             return True
@@ -217,8 +244,54 @@ class Layer(object):
                                                                  self.grid.edges['max'][i]+self.grid.spacings[i]) for i in range(t.shape[1])], density=True)
         return jensenshannon(h1,h2)**2 < self.grid.JS_THR
     
+    def consistency_check(self,node):
+        """
+        This tests whether the trajectory data is consistent with the underlying FES
+        """
+        if self.grid.CONSISTENCY_THR is None:
+            return True
+        
+        beta = 1/(boltzmann*self.grid.data['temp']*kelvin/self.grid.fes_unit)
+
+        trajs=node.trajs
+        t = trajs[0][self.grid.RUN_UP_TIME:]
+
+        # Get the (biased) FES
+        grid = self.grid.fes[0].copy() # in cv_units
+        biased_fes = self.grid.fes[1].copy() # in fes_units
+
+        bias = np.sum(0.5*node.kappas*(grid-node.loc)**2,axis=-1)
+        biased_fes += bias
+
+        # Calc expected biased probability
+        biased_prob = np.exp(-beta*biased_fes)
+        biased_prob[np.isnan(biased_prob)] = 0.0 # if fes is nan, this region was not sampled
+
+        # Calculate bin_edges of the FES
+        bin_edges, bin_widths = get_grid_edges(grid)
+
+        # Calculate histogram of trajectory data with bin centers defined by the FES data
+        h1, edges = np.histogramdd(t, bins=bin_edges, density=True)
+
+        h1 = h1/np.sum(h1)
+        density_biased_prob = biased_prob/np.sum(biased_prob)
+
+        # Calculate consistency
+        consistent = (1 - jensenshannon(density_biased_prob, h1, base=2)**2) >= self.grid.CONSISTENCY_THR
+
+        if self.grid.PLOT_CONSISTENT: # and not consistent:
+            fig = pt.figure()
+            ax = fig.gca()
+            grid_utils.plot_ref_grid(ax,self,size=50.0,show_deviants=False) 
+            grid_utils.plot_consistency(ax, node, edges, h1, density_biased_prob, bin_widths)
+            title = "Consistent = {}".format(consistent)
+            fig.suptitle(title)
+            fig.savefig('consistency_{}.pdf'.format("-".join([str(i) for i in node.identity])),bbox_inches='tight')
+            
+        return consistent
+
     
-    def traj_confinement(self,node,factor=1.,plot=True):
+    def sanity_check(self,node,factor=1.,plot=True):
         trajs = node.trajs
 
         t = trajs[0][self.grid.RUN_UP_TIME:]
@@ -228,23 +301,26 @@ class Layer(object):
                 t = np.vstack((t,traj[self.grid.RUN_UP_TIME:]))
                 fullt = np.vstack((t,traj))
 
+        # check confinement ~ 1st moment
         mask = np.ones(t.shape[0],dtype=bool)
         for n,step in enumerate(self.steps):
             mask = mask & (t[:,n]<node.loc[n]+step/factor) & (t[:,n]>node.loc[n]-step/factor)
         confinement = sum(mask)/float(len(mask))
+        sane = confinement >= self.grid.CONFINEMENT_THR
 
-        if self.grid.PLOT_CON and plot and confinement < self.grid.CONFINEMENT_THR:
+        if self.grid.PLOT_CON and plot: # and not sane:
             fig = pt.figure()
             ax = fig.gca()
             grid_utils.plot_ref_grid(ax,self,size=50.0,show_deviants=False) 
-            grid_utils.plot_dev(ax, node, fullt, self.steps, self)
-            fig.suptitle("Sanity = {:4.3f}".format(confinement))
-            #pt.show()
+            grid_utils.plot_dev(ax, node, t, self.steps, self)
+            title = "Sanity = {:4.3f}".format(confinement)
+            fig.suptitle(title)
             fig.savefig('confinement_{}.pdf'.format("-".join([str(i) for i in node.identity])),bbox_inches='tight')
-        return confinement
+            
+        return sane
 
 
-    def NNoverlap(self,node1,node2):
+    def overlap_check(self,node1,node2):
         trajs1 = node1.trajs
         trajs2 = node2.trajs
 
@@ -271,14 +347,12 @@ class Layer(object):
             overlap += np.sum(np.minimum(h1,h2)*bin_volume)
         overlap /= len(trajs2)
 
-        if self.grid.PLOT_OVERLAP and overlap < self.grid.OVERLAP_THR:
+        if self.grid.PLOT_OVERLAP: # and overlap < self.grid.OVERLAP_THR:
             fig = pt.figure()
             ax = fig.gca()
             grid_utils.plot_ref_grid(ax,self,size=10.0,show_deviants=False) 
             grid_utils.plot_overlap(ax, node1, node2, t1, trajs2, self.steps, self)
-            #fig.legend()
             fig.suptitle("Overlap = {:4.3f}".format(overlap))
-            #pt.show()
             fig.savefig('overlap_{}_{}.pdf'.format("-".join([str(i) for i in node1.identity]),"-".join([str(i) for i in node2.identity])),bbox_inches='tight')
         return overlap
 
@@ -319,13 +393,12 @@ class Layer(object):
         grid_utils.plot_ref_grid(ax,self,size=1.)
         pt.close('check_overlap') # make sure this does not get plotted somewhere
 
-        # Check if certain simulations are not converged or whether they deviatiated substantially from their supposed locations
+        # Check Node confinement, convergence, and consistency
         for n,node in enumerate(self.nodes):
             if isinstance(node, Node) and not node.extreme_kappa:
-                # Check traj confinement
-                confinement = self.traj_confinement(node)
+                confined = self.sanity_check(node)
                 # If the simulation went out of bounds, the overlap loses all meaning at this location
-                if confinement < self.grid.CONFINEMENT_THR:
+                if not confined:
                     node.confined = False
                     if len(node.loc)==1:
                         ax.scatter(node.loc[0],0., s=5., color='b', marker='x')
@@ -333,7 +406,7 @@ class Layer(object):
                         ax.scatter(node.loc[0],node.loc[1], s=5., color='b', marker='x')
                 else: # if the simulation went out of bounds we don't even need to check the convergence
                     # Check traj convergence
-                    converged = self.traj_convergence(node)
+                    converged = self.convergence_check(node)
                     if not converged:
                         print(node.identity, ': this node trajectory was not converged, the simulation will be repeated.')
                         node.converged = False
@@ -341,6 +414,18 @@ class Layer(object):
                             ax.scatter(node.loc[0],0., s=5., color='purple', marker='x')
                         elif len(node.loc)==2:
                             ax.scatter(node.loc[0],node.loc[1], s=5., color='purple', marker='x')
+                    else:
+                        # Check traj consistency by considering the expected PDF versus the sampled PDF
+                        # When the biased FES contains multiple minima, separated by unsurmountable barriers,
+                        # and the trajectory only samples a single minimum, the kappa value should be increased
+                        # until only a single minimum remains
+                        consistent = self.consistency_check(node)
+                        if not consistent:
+                            node.consistent = False
+                            if len(node.loc)==1:
+                                ax.scatter(node.loc[0],0., s=5., color='pink', marker='x')
+                            elif len(node.loc)==2:
+                                ax.scatter(node.loc[0],node.loc[1], s=5., color='pink', marker='x')
                     
 
         # Check overlap between point and neighbours in idx to find points for which finer grid is required
@@ -371,20 +456,20 @@ class Layer(object):
                             if n > neighbour:
                                 self.overlap[n,m] = self.overlap[neighbour,self.nodes[neighbour].neighbours.index(n)]
                             else:
-                                self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
+                                self.overlap[n,m] = self.overlap_check(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
 
                         elif isinstance(self.nodes[neighbour],RealizedBenchmarkNode) and self.nodes[neighbour].sane:
-                            self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
+                            self.overlap[n,m] = self.overlap_check(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
                         
                         elif isinstance(self.nodes[neighbour],SuperlayerBenchmarkNode):
-                            self.overlap[n,m] = self.NNoverlap(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
+                            self.overlap[n,m] = self.overlap_check(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
 
                         elif isinstance(self.nodes[neighbour],VirtualBenchmarkNode):
                             if not self.nodes[neighbour].sane:
                                 # it might already be visited by another node
                                 raise AssertionError('This cannot happen. It should have been replaced')
                                 continue 
-                            overlap = self.NNoverlap(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
+                            overlap = self.overlap_check(node, self.nodes[neighbour])>=self.grid.OVERLAP_THR
                             if not overlap:
                                 self.nodes[neighbour] = self.nodes[neighbour].realize() # this will result in the generation of a RealizedBenchmarkNode at this location
                                 if len(node.loc)==1:

@@ -18,6 +18,7 @@ class Node(object):
         #self.sane = True 
         self.converged = True
         self.confined = True
+        self.consistent = True
         self._type = None
 
     def set_extreme_kappa(self,MAX_KAPPA,KAPPA_GROWTH_FACTOR):
@@ -26,7 +27,7 @@ class Node(object):
 
     @property
     def sane(self):
-        return self.confined and self.converged
+        return self.confined and self.converged and self.consistent
 
     @property
     def type(self):
@@ -37,7 +38,7 @@ class Node(object):
         return self._type
 
     def node_info(self,identity=None,grid=None):
-        if self.confined:
+        if self.confined and self.consistent:
             kappas = self.kappas
         else:
             kappas = np.clip(self.kappas*grid.KAPPA_GROWTH_FACTOR,0,grid.MAX_KAPPA)
@@ -97,7 +98,7 @@ class SuperlayerBenchmarkNode(BenchmarkNode):
         # This will initialize the benchmark node based on a node from the upper lying layer
         assert node.sane
         super(SuperlayerBenchmarkNode,self).__init__(node.loc,[node])
-        self._sane = layer.traj_confinement(self,factor=2.,plot=False) >= layer.grid.CONFINEMENT_THR
+        self._sane = layer.sanity_check(self,factor=2.,plot=False)
 
     @property
     def type(self):

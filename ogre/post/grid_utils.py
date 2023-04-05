@@ -256,7 +256,33 @@ def plot_dev(ax, node, traj, steps, layer):
         ax.set_ylim([(node.loc[1]-2*steps[1]),(node.loc[1]+2*steps[1])])
     else:
         raise NotImplementedError("Can't make deviation plots in more than 2 dimensions.")
+    
 
+
+def plot_consistency(ax, node, edges, hist_sample, hist_calc, binwidth):
+    if len(node.loc) == 1:
+        # (left corner, width, height) histogram starts at 0.1
+        ax.bar(edges[0][:-1],hist_sample,align='edge',width=binwidth,bottom=0.1,edgecolor='k',zorder=-1,label='sampled prob')
+        ax.bar(edges[0][:-1],hist_calc,  align='edge',width=binwidth,bottom=0.1,label='biased prob', alpha=0.5)
+
+        ax.scatter([node.loc[0]],[0],s=20.0,marker='x',c=colors[1])
+        ax.set_ylim([-0.25,np.max(hist_sample)+0.25])
+
+        pt.tick_params(
+        axis='y',          # changes apply to the x-axis
+        which='both',      # both major and minor ticks are affected
+        left=False,        # ticks along the left edge are off
+        right=False,       # ticks along the right edge are off
+        labelleft=False)  # labels along the left edge are off
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+    else:
+        raise NotImplementedError("Can't make consistency plots in more than 1 dimensions.")
+    
+
+    
 def plot_overlap(ax, node1, node2, traj1, trajs2, steps, layer):
     grid = layer.grid
     binwidths = grid.HISTOGRAM_BIN_WIDTHS
@@ -300,7 +326,7 @@ def plot_overlap(ax, node1, node2, traj1, trajs2, steps, layer):
         if len(trajs2)>1:
             for t2 in trajs2:
                 ax.scatter(t2[0,0],t2[0,1],s=40,marker='x', c='g')#, label='t2')
-        ax.scatter(t1[:,0],t1[:,1],s=0.1, c='r')#, label='t1')
+        ax.scatter(traj1[:,0],traj1[:,1],s=0.1, c='r')#, label='t1')
         for t2 in trajs2:
             ax.scatter(t2[:,0],t2[:,1],s=0.1, c='b')#, label='t2')
         ax.set_xlim([(node1.loc[0]-4*steps[0]),(node1.loc[0]+4*steps[0])])
@@ -491,6 +517,12 @@ def write_layer(layer,max_index=None,debug=False):
 
     # First we check whether we need to write the following grid layer information
     if max_index is not None and layer.index+1 == max_index:
+        # Reset the non_converged file
+        if os.path.exists('non_converged'):
+            os.remove('non_converged')
+        if len(layer.sublayer_nodes)>0:
+            with open('non_converged','w') as f:
+                pass # the file does not need any input
         print('MAX_LAYERS reached.')
     else:
         # If so, loop over all sublayer nodes (nodes and benchmark nodes)

@@ -232,12 +232,12 @@ def make_path(min,max):
     return Path.Path(sort_vertices(vertices), closed=True)
 
 def get_edges(rvecs):
-    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],False)
+    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],plot=False)
     vertices = path.vertices
     return [np.min(vertices[:,0]),np.max(vertices[:,0]),np.min(vertices[:,1]),np.max(vertices[:,1])]
 
-def get_rows(rvecs,spacings):
-    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2])
+def get_rows(rvecs,spacings,plot):
+    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],plot=plot)
     r = np.max(np.linalg.norm(path.vertices,axis=-1))
     rows = [np.sort(np.hstack((np.arange(-sp,-r-sp,-sp), np.array([0]),  np.arange(sp, r+sp, sp)))) for sp in spacings] # make square grid from -r to r (too big)
     return rows,path
@@ -287,7 +287,7 @@ def make_grid(options):
     options.spacings = np.array(options.spacings)
 
     if hasattr(options,'cof2d') and options.cof2d:
-        rows, path = get_rows(options.rvecs,options.spacings)
+        rows, path = get_rows(options.rvecs,options.spacings,plot=options.plot)
         g = np.meshgrid(*rows,indexing='ij')
         mesh = np.vstack(map(np.ravel, g)).T
         mesh = mesh[path.contains_points(mesh,radius=np.min(options.spacings)*2.1)] # return points within path + fringe for better convergence of edges, change this to 2.1 for symmetric grid (it was 2.0 before)
