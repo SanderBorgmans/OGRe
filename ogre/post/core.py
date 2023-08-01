@@ -1,14 +1,14 @@
 #! /usr/bin/python
 import ogre.post.sampling as sampling
 
-__all__ = ['investigate_overlap']
+__all__ = ['ogre_refinement']
 
 ################################
 # CORE CODE
 
-def investigate_overlap(data,debug=False):
+def ogre_refinement(data,debug=False):
     """
-        Check the overlap heuristic, and create new refinement
+        Load the Grid object through all layer files, and refine it based on the trajectories and the ogre metrics
     """
     print('Loading Grid')
     grid = sampling.Grid(data,debug=debug)
