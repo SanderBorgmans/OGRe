@@ -1,4 +1,5 @@
-# OGRe
+![ogre](./docs/ogre_icon.svg)
+
 OGRe or "Optimal Grid Refinement tool" is a standalone tool to minimize the computational effort for free energy evaluation methods that require an overlap of simulated probability densities. It is a package for an easy and automatic generation of a grid to perform umbrella sampling simulations, and process the simulations on that grid to refine the grid parameters. In this way a converged free energy profile can be obtained.
 
 OGRe is distributed as open source software under the conditions of the GPL license version 3. Read the file COPYING for more details, or visit http://www.gnu.org/licenses/
