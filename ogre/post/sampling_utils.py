@@ -1,64 +1,10 @@
+
 #! /usr/bin/python
 import numpy as np
-
-import matplotlib.pyplot as pt
-import matplotlib.patches as mpatches
-
-from scipy.spatial import KDTree
-
-from ogre.input.utils import wigner_seitz_cell
+from scipy.spatial import cKDTree as KDTree # identical to KDTree but a lot faster before v1.6.0 
 
 DECIMALS = 5
 precision = 10**(-DECIMALS)
-
-colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-
-def plot_dev(ax, node, traj, steps):
-    if len(node.loc) == 1:
-        ax.scatter(traj[:],np.zeros_like(traj[:]),s=0.1, c='r')
-        ax.scatter([node.loc[0]],[0],s=20.0,marker='x',c='r')
-        ax.vlines(((node.loc[0]+ np.array([steps[0],-steps[0]]))),-0.5,0.5)
-        ax.set_xlim([(node.loc[0]-2*steps[0]),(node.loc[0]+2*steps[0])])
-        ax.set_ylim([-0.5,0.5])
-    elif len(node.loc) == 2:
-        _,path = wigner_seitz_cell(np.diag(steps*2),False)
-        path.vertices += node.loc
-        patch = mpatches.PathPatch(path, facecolor="none", lw=1)
-
-        ax.scatter(traj[:,0],traj[:,1],s=0.1, c='r')
-        ax.scatter([node.loc[0]],[node.loc[1]],s=20.0,marker='x',c='r')
-        ax.add_patch(patch)
-        ax.set_xlim([(node.loc[0]-2*steps[0]),(node.loc[0]+2*steps[0])])
-        ax.set_ylim([(node.loc[1]-2*steps[1]),(node.loc[1]+2*steps[1])])
-    else:
-        raise NotImplementedError("Can't make deviation plots in more than 2 dimensions.")
-
-
-def plot_overlap(ax, node1, node2, t1, trajs2, steps):
-    if len(node1.loc) == 1:
-        ax.scatter([node1.loc[0]],[0],s=30.0,marker='x',c='r',label='t1_loc')
-        ax.scatter([node2.loc[0]],[0],s=30.0,marker='x',c='b',label='t2_loc')
-        if len(trajs2)>1:
-            for t2 in trajs2:
-                pt.scatter(t2[0,0],0,s=40,marker='x', c='g')#, label='t2')
-        pt.scatter(t1,np.zeros_like(t1),s=0.1, c='r')#, label='t1')
-        for t2 in trajs2:
-            pt.scatter(t2,np.zeros_like(t2),s=0.1, c='b')#, label='t2')
-        pt.xlim([(node1.loc[0]-4*steps[0]),(node1.loc[0]+4*steps[0])])
-    elif len(node1.loc) == 2:
-        ax.scatter([node1.loc[0]],[node1.loc[1]],s=30.0,marker='x',c='r',label='t1_loc')
-        ax.scatter([node2.loc[0]],[node2.loc[1]],s=30.0,marker='x',c='b',label='t2_loc')
-        if len(trajs2)>1:
-            for t2 in trajs2:
-                ax.scatter(t2[0,0],t2[0,1],s=40,marker='x', c='g')#, label='t2')
-        ax.scatter(t1[:,0],t1[:,1],s=0.1, c='r')#, label='t1')
-        for t2 in trajs2:
-            ax.scatter(t2[:,0],t2[:,1],s=0.1, c='b')#, label='t2')
-        ax.set_xlim([(node1.loc[0]-4*steps[0]),(node1.loc[0]+4*steps[0])])
-        ax.set_ylim([(node1.loc[1]-4*steps[1]),(node1.loc[1]+4*steps[1])])
-    else:
-        raise NotImplementedError("Can't make overlap plots in more than 2 dimensions.")
-
 
 def norm(point,spacings):
     # check whether point lies within ellipsoid
@@ -70,6 +16,7 @@ def find_neighbours(steps,nodes):
         Find the neighbours for each node
     """
     points = np.round(np.array([node.loc for node in nodes]),DECIMALS)
+
     tree = KDTree(points)
     neighbours = []
     for n,node in enumerate(nodes):
@@ -122,3 +69,35 @@ def make_unique(steps,points,get_mask=False):
 def find_node_index(tree,point):
     ds,idx = tree.query(np.round(point,DECIMALS),1) # Find the point
     return ds<precision, idx
+    
+
+def get_grid_edges(grid):
+    """
+    Calculate the edges for each grid point in a grid of coordinates.
+
+    Args:
+        grid (ndarray): An M-dimensional grid of coordinates with shape (N_1, N_2, ..., N_M, M).
+
+    Returns:
+        tuple: A tuple of M ndarrays, where each ndarray represents the one-dimensional
+        grid edges along that dimension.
+    """
+    edges = []
+    width_list = []
+    for dim in range(grid.shape[-1]):
+        # Calculate the edge widths along this dimension
+        widths = np.diff(grid[..., dim], axis=dim).ravel()
+        width = widths[0]
+        # Assume the grid is uniform
+        assert np.allclose(widths,width)
+
+        # Get a single row of the values along this dimension
+        fixed_dims = (0,) * dim + np.index_exp[:] + (0,) * (grid.shape[-1] - dim - 1) + (dim,)
+        row = grid[fixed_dims]
+
+        # Calculate edges
+        dim_edges = np.append(row - width/2.,row[-1]+width/2.)
+        edges.append(dim_edges)
+        width_list.append(width)
+
+    return tuple(edges), width_list
