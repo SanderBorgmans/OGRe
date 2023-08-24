@@ -22,8 +22,8 @@ parser.add_option("--overlap",
           action="store_true", dest="overlap", help="perform the overlap analysis, this should not be repeated before performing new simulations! [default: %default]", default=False)
 parser.add_option("--fes",
           action="store_true", dest="fes", help="calculate the FES for the current data [default: %default]", default=False)
-parser.add_option("--test",
-          action="store_true", dest="test", help="perform the overlap analysis, without creating/changing/removing any files [default: %default]", default=False)
+parser.add_option("--debug",
+          action="store_true", dest="debug", help="perform the overlap analysis, without creating/changing/removing any files [default: %default]", default=False)
 parser.add_option("--fes_index",
                   action="store", type="int", dest="fes_index", help="number of grid iterations to take into account [default: %default]", default=0)
 parser.add_option("--plot_deviating",
