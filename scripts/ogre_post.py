@@ -2,6 +2,7 @@
 import os,yaml,sys
 from optparse import OptionParser
 from ogre.post.core import *
+from ogre.post.fes import *
 
 from molmod.units import *
 
@@ -56,11 +57,11 @@ if options.refresh or options.overlap:
 
 if options.overlap:
     # Check overlap and generate fine grid if necessary
-    investigate_overlap(data,test=options.test)
+    ogre_refinement(data,debug=options.debug)
 
 if options.fes:
     if options.fes_index==0:
         # Calculate FES with all data
-        generate_fes_thermolib(data)
+        generate_fes(data)
     else:
-        generate_fes_thermolib(data,index=options.fes_index-1) # index corresponds to grid number, which starts counting at 0
+        generate_fes(data,index=options.fes_index-1) # index corresponds to grid number, which starts counting at 0
