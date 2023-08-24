@@ -12,8 +12,8 @@ from ogre.sim.core import *
 
 if __name__ == "__main__":
     parser = OptionParser(usage="Usage: %prog [<options>]")
-    parser.add_option("--grid",
-              action="store", type="int", dest="grid")
+    parser.add_option("--layer",
+              action="store", type="int", dest="layer")
     parser.add_option("--nr",
               action="store", type="int", dest="nr")
     parser.add_option("--potential",
@@ -33,9 +33,9 @@ if __name__ == "__main__":
     if not hasattr(options, 'custom_cv'): options.custom_cv = './custom_cv.py'
 
     if data['mode'] == 'analytic':
-        sim = OGRe_Simulation(options.grid,options.nr,input=data,potential=options.potential)
+        sim = OGRe_Simulation(options.layer,options.nr,input=data,potential=options.potential)
     elif data['mode'] == 'application':
-        sim = OGRe_Simulation(options.grid,options.nr,input=data,custom_cv=options.custom_cv)
+        sim = OGRe_Simulation(options.layer,options.nr,input=data,custom_cv=options.custom_cv)
     else:
         raise ValueError('An invalid mode was selected for terminal based use of OGRe.')
     sim.simulate()
