@@ -667,7 +667,7 @@ class Layer(object):
 
                 # Check whether the neighbouring nodes are sane, if not, it does not make sense to create a reference yet
                 # It will be generated at a later instance
-                if all([self.nodes[nnode].sane for nnode in neighbour_nodes]):
+                if all([self.nodes[nnode].sane for nnode in neighbour_nodes]) and len(neighbour_nodes)>0::
                     # Create a VirtualBenchmarkNode
                     vn = VirtualBenchmarkNode(node, [self.nodes[nnode] for nnode in neighbour_nodes])
                     self.sublayer_nodes.append(vn)
