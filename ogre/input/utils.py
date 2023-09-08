@@ -149,7 +149,7 @@ class OGRe_Input(object):
             assert cv_units[0]==cv_units[1]
             rvecs = chk['rvecs']/cv_units[0] # assume rvecs are in atomic units
             self.rvecs = rvecs # store rvecs in input class
-            edges = get_edges(rvecs) 
+            edges = get_edges(rvecs, self.spacings) 
             self.edges = {'min' : [float(edges[0]),float(edges[2])], 'max' : [float(edges[1]),float(edges[3])]}
 
         # Convert edges to dictionary for easy parsing
@@ -231,10 +231,10 @@ def make_path(min,max):
         return None
     return Path.Path(sort_vertices(vertices), closed=True)
 
-def get_edges(rvecs):
+def get_edges(rvecs,spacings):
     _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],plot=False)
-    vertices = path.vertices
-    return [np.min(vertices[:,0]),np.max(vertices[:,0]),np.min(vertices[:,1]),np.max(vertices[:,1])]
+    rows = [np.sort(np.hstack((np.arange(-sp,np.min(path.vertices[:,n])-sp,-sp), np.array([0]),  np.arange(sp, np.max(path.vertices[:,n])+sp, sp)))) for n,sp in enumerate(spacings)] # make square grid from -r to r (too big)
+    return [np.min(rows[0]),np.max(rows[0]),np.min(rows[1]),np.max(rows[1])]
 
 def get_rows(rvecs,spacings,plot):
     _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],plot=plot)
