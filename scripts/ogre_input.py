@@ -56,4 +56,4 @@ if __name__ == "__main__":
 
     # Copy the grid00.txt file to run.txt
     from shutil import copyfile
-    copyfile('grid00.txt', 'run.txt') # create initial run file
+    copyfile('layer00.txt', 'run.txt') # create initial run file
