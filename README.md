@@ -107,7 +107,7 @@ When performing actual force field simulations with Yaff, you are required to pr
 
 **Example usage**
 
-`ogre_sim.py --grid 0 --nr 0 --cvs 0.0,0.5 --kappas 10.0,10.0`
+`ogre_sim.py --layer 0 --nr 0`
 
 ## POSTPROCESSING
 For the evaluation of your collection of simulations, you can use the ogre_post.py script. This can evaluate the quality of each simulation by considering their deviation from the umbrella center and the overlap with simulations of neighbouring grid points. After this evaluation, it will refine the kappa values of existing grid files for deviating simulations, and generate additional grid points in regions where the overlap was insufficient.
@@ -115,4 +115,4 @@ For the evaluation of your collection of simulations, you can use the ogre_post.
 `ogre_post.py --overlap` \
 `ogre_post.py --fes`
 
-You can add the `--test` flag when performing the overlap analysis to avoid creating, deleting, or replacing certain files or file entries. This can be convenient when tweaking the hyperparameters.
+You can add the `--debug` flag when performing the overlap analysis to avoid creating, deleting, or replacing certain files or file entries. This can be convenient when tweaking the hyperparameters.
