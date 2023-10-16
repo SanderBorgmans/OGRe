@@ -6,7 +6,6 @@ import matplotlib.patches as patches
 
 from scipy.spatial import Voronoi,voronoi_plot_2d
 
-from molmod.io import load_chk
 from molmod.units import *
 
 __all__ = ['OGRe_Input']
@@ -43,9 +42,6 @@ class OGRe_Input(object):
     def __init__(self,mode,**kwargs):
         '''
             **Simulations parameters**
-
-            mode
-                the potential mode
 
             kappas
                 list of kappa values for each cv in fes_unit/cv_units**2
@@ -100,40 +96,14 @@ class OGRe_Input(object):
                 plot the cv grid, defaults to True
         '''
 
-        self.mode = mode
-
         # Assign the possible input values of kwargs
         for k,v in kwargs.items():
             setattr(self,k,v)
-
-        # Sanity checks
-        if self.mode=='application':
-            if os.path.exists('init.chk'):
-                chk_file = 'init.chk'
-                chk = load_chk(chk_file)
-            else:
-                raise AssertionError('There was no structure file!')
-
-            if len(glob.glob('pars*.txt'))==0:
-                raise ValueError('No force field files found!')
-
 
         # SIMULATION PARAMETERS (other default values are assigned in sim/core.py)
         if not hasattr(self,'runup'):
             self.runup = 0 # no run up by default
 
-        if not hasattr(self,'h5steps'):
-            self.h5steps = 1 # save all data by default
-
-        # Certain parameters should be evaluated to parse units
-        for param in ['timestep', 'temp', 'press', 'timecon_thermo', 'timecon_baro']:
-            if hasattr(self,param):
-                val = getattr(self,param)
-                val = eval(val) if isinstance(val,str) else val
-                setattr(self, param, val)
-
-        # Convert runup to h5step format (since the runup parameter is used when slicing)
-        self.runup = self.runup//self.h5steps
 
         if not hasattr(self,'cv_units') or self.cv_units is None:
             self.cv_units = ['1']
@@ -143,14 +113,6 @@ class OGRe_Input(object):
         if not hasattr(self,'fes_unit') or self.fes_unit is None:   
             self.fes_unit = 'kjmol'
 
-        # If cof2d setting True, calculate the edges instead of parsing them
-        if hasattr(self,'cof2d') and self.cof2d:
-            cv_units = get_cv_units(vars(self))
-            assert cv_units[0]==cv_units[1]
-            rvecs = chk['rvecs']/cv_units[0] # assume rvecs are in atomic units
-            self.rvecs = rvecs # store rvecs in input class
-            edges = get_edges(rvecs, self.spacings) 
-            self.edges = {'min' : [float(edges[0]),float(edges[2])], 'max' : [float(edges[1]),float(edges[3])]}
 
         # Convert edges to dictionary for easy parsing
         if not isinstance(self.edges,dict):
@@ -210,17 +172,6 @@ def sort_vertices(vertices):
     sorted_v = vertices[angles.argsort()]
     return np.concatenate((sorted_v,[sorted_v[0]]),axis=0)
 
-def wigner_seitz_cell(vecs,plot=True):
-    assert vecs.shape[0]==2
-    # make wigner seitz cell boundary
-    images = np.array([sum(n * vec for n, vec in zip(ns, vecs)) for ns in itertools.product([-1,0,1],repeat=2)]) # 2 dimensions
-    images = images[np.where(np.linalg.norm(images,axis=-1)!=np.linalg.norm(images,axis=-1).max())] # get nearest neighbors
-    vor = Voronoi(images)
-    if plot:
-        fig = voronoi_plot_2d(vor)
-        pt.show()
-        pt.close()
-    return vor,Path.Path(sort_vertices(vor.vertices), closed=True)  # make sure that ordening is right
 
 def make_path(min,max):
     if len(min) == 1:
@@ -230,17 +181,6 @@ def make_path(min,max):
     else:
         return None
     return Path.Path(sort_vertices(vertices), closed=True)
-
-def get_edges(rvecs,spacings):
-    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],plot=False)
-    rows = [np.sort(np.hstack((np.arange(-sp,np.min(path.vertices[:,n])-sp,-sp), np.array([0]),  np.arange(sp, np.max(path.vertices[:,n])+sp, sp)))) for n,sp in enumerate(spacings)] # make square grid from -r to r (too big)
-    return [np.min(rows[0]),np.max(rows[0]),np.min(rows[1]),np.max(rows[1])]
-
-def get_rows(rvecs,spacings,plot):
-    _,path = wigner_seitz_cell(np.array(rvecs)[0:2,0:2],plot=plot)
-    r = np.max(np.linalg.norm(path.vertices,axis=-1))
-    rows = [np.sort(np.hstack((np.arange(-sp,-r-sp,-sp), np.array([0]),  np.arange(sp, r+sp, sp)))) for sp in spacings] # make square grid from -r to r (too big)
-    return rows,path
 
 def write_grid(points,options,plot,path):
     with open('layer{0:0=2d}.txt'.format(0),'w') as f:
@@ -286,18 +226,10 @@ def make_grid(options):
     assert len(min) == len(options.kappas)
     options.spacings = np.array(options.spacings)
 
-    if hasattr(options,'cof2d') and options.cof2d:
-        rows, path = get_rows(options.rvecs,options.spacings,plot=options.plot)
-        g = np.meshgrid(*rows,indexing='ij')
-        mesh = np.vstack(map(np.ravel, g)).T
-        mesh = mesh[path.contains_points(mesh,radius=np.min(options.spacings)*2.1)] # return points within path + fringe for better convergence of edges, change this to 2.1 for symmetric grid (it was 2.0 before)
-        write_grid(mesh,options,plot,path)
-
-    else:
-        arrs = [np.arange(min[n],max[n]+options.spacings[n],options.spacings[n]) for n,_ in enumerate(min)]
-        g = np.meshgrid(*arrs,indexing='ij')
-        mesh = np.vstack(map(np.ravel, g)).T
-        write_grid(mesh,options,plot,make_path(min,max))
+    arrs = [np.arange(min[n],max[n]+options.spacings[n],options.spacings[n]) for n,_ in enumerate(min)]
+    g = np.meshgrid(*arrs,indexing='ij')
+    mesh = np.vstack(map(np.ravel, g)).T
+    write_grid(mesh,options,plot,make_path(min,max))
 
 def get_cv_units(data):
     if 'cv_units' in data:

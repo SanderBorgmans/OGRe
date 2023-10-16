@@ -2,16 +2,15 @@
 ![ogre](./docs/ogre_icon_dark_wide_path.svg#gh-dark-mode-only)
 
 
-# OGRe-Yaff
-OGRe-Yaff or "Optimal Grid Refinement tool" is a tool to minimize the computational effort for free energy evaluation methods that require an overlap of simulated probability densities. It is a package for an easy and automatic generation of a grid to perform umbrella sampling simulations with Yaff, and process the simulations on that grid to refine the grid parameters. In this way a converged free energy profile can be obtained.
+# OGRe-Simulator
+OGRe-Simulator or "Optimal Grid Refinement tool" is a tool to minimize the computational effort for free energy evaluation methods that require an overlap of simulated probability densities. It is a package for an easy and automatic generation of a grid to perform umbrella sampling simulations with a custom simulator, and process the simulations on that grid to refine the grid parameters. In this way a converged free energy profile can be obtained.
 
 OGRe is distributed as open source software under the conditions of the GPL license version 3. Read the file COPYING for more details, or visit http://www.gnu.org/licenses/
 
 ## INSTALLATION
-OGRe-Yaff requires the following packages to work:
+OGRe-Simulator requires the following packages to work:
 - cython, numpy, scipy,  h5py, matplotlib, yaml
 - molmod
-- yaff
 - ThermoLIB
 
 
@@ -39,36 +38,14 @@ the minimum and maximum values for the cvs in cv_units, *i.e.  `--edges min_cv_1
 
 **-optional-**
 
-`mdsteps` *[integer]* \
-[default = 10000] number of md steps to execute
-
-`runup` *[integer]* \
-[default = 0] number of md steps to omit as equilibration time
-
-`h5steps` *[integer]* \
-[default = 5] saves the trajectory data every `h5steps` steps
-
-`timestep` *[float]* \
-[default = 0.5*fs] time step for the MD integrator (in atomic units)
-
-`temp` *[float]* \
-[default = 300.0*K] temperature for the MD simulation (in atomic units)
-
-`timecon_thermo` *[float]* \
-[default = 100.0*fs] timeconstant for the thermostat (in atomic units)
-
-`press` *[float]* \
-[default = 1e5*Pa] pressure for the MD simulation (in atomic units)
-
-`timecon_baro` *[float]* \
-[default = 1000.0*fs] timeconstant of the barostat (in atomic units)
-
 `cv_units` *[strings, comma separated list]* \
 [default = 1] the units in which you specify your collective variables, with respect to the units from your MD code following the molmod unit conventions\
 *e.g.* for an MD code that uses atomic units, you can simply use the name of the unit you want for your cv(s), `--cv_units angstrom`
 
 `fes_unit` *[string]* \
 [default = kjmol] unit to express energies, with respect to the units from your MD and FES code following the molmod unit conventions
+
+Other MD parameters can be defined in a key=value manner.
 
 **Hyperparameters**
 
@@ -99,15 +76,9 @@ Should the final refinement not be sufficient, the `MAX_LAYERS` can always be ad
 ## SIMULATION
 To perform the simulations you can use the ogre_sim.py script (or use the OGRe_Simulation class in your own code). This script takes the simulation identifiers as input arguments, and loads all other settings from the generated data.yml file. Ideally this script is executed in parallel over all required grid points of the `run.txt` file. An instructive example (using the OGRe_Simulation class instead of the script) is provided (on github), which simulates all required points for a simple analytic potential. This finally results in a folder `trajs`, containing all MD trajectories spawned by OGRe_Simulation, identified by their identifier (*e.g.* `trajs/traj_0_0.h5`). The required information for the post-processing step is obviously included in these trajectory files. 
 
-**Analytic**
-When performing analytic simulations, you are required to provide a `potential.py` file, specifying the energy behaviour as a function of the degrees of freedom (which coincide with the collective variables). This then obviously allows to calculate the exact profile as well to compare with later (see github for an example). (***Note***) The MD pressure arguments are neglected for these simulation, and the temperature is controlled with a CVSR thermostat.
-
-**Application**
-When performing actual force field simulations with Yaff, you are required to provide a system file named `init.chk` containing all the relevant information as for any Yaff simulation. Moreover, all `pars*.txt` files are loaded as the force field parameters. Finally, a `custom_cv.py` file is required which specifies the collective variable in a Yaff format (see github for example). (***Note***) The specific force field settings for ff.generate() should be adapted in the `sim/core.py` script manually.
-
 **Example usage**
 
-`ogre_sim.py --grid 0 --nr 0 --cvs 0.0,0.5 --kappas 10.0,10.0`
+`ogre_sim.py --layer 0 --nr 0`
 
 ## POSTPROCESSING
 For the evaluation of your collection of simulations, you can use the ogre_post.py script. This can evaluate the quality of each simulation by considering their deviation from the umbrella center and the overlap with simulations of neighbouring grid points. After this evaluation, it will refine the kappa values of existing grid files for deviating simulations, and generate additional grid points in regions where the overlap was insufficient.
@@ -115,4 +86,4 @@ For the evaluation of your collection of simulations, you can use the ogre_post.
 `ogre_post.py --overlap` \
 `ogre_post.py --fes`
 
-You can add the `--test` flag when performing the overlap analysis to avoid creating, deleting, or replacing certain files or file entries. This can be convenient when tweaking the hyperparameters.
+You can add the `--debug` flag when performing the overlap analysis to avoid creating, deleting, or replacing certain files or file entries. This can be convenient when tweaking the hyperparameters.

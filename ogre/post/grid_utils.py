@@ -7,7 +7,6 @@ import matplotlib.patches as mpatches
 
 
 from molmod.units import *
-from ogre.input.utils import wigner_seitz_cell
 from ogre.post.nodes import *
 from ogre.post.sampling_utils import precision
 
@@ -247,11 +246,10 @@ def plot_dev(ax, node, traj, steps, layer):
         ax.spines['left'].set_visible(False)
             
     elif len(node.loc) == 2:
-        _,path = wigner_seitz_cell(np.diag(steps*2),False)
-        path.vertices += node.loc
-        patch = mpatches.PathPatch(path, facecolor="none", lw=1, edgecolor='r')
+        patch = mpatches.Rectangle((node.loc[0]-steps[0], node.loc[1]-steps[1]), 2*steps[0], 2*steps[1], facecolor='#e6e6e6', fill=True, zorder=-10) # (x,y), width, height
         h1m =  np.ma.masked_where(h1==0.0,h1)
         ax.pcolormesh(edges[0], edges[1], h1m.T, cmap='Oranges')
+
 
         #ax.scatter(traj[:,0],traj[:,1],s=0.1, c='r')
         ax.scatter([node.loc[0]],[node.loc[1]],s=20.0,marker='x',c='r')
