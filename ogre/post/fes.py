@@ -19,7 +19,8 @@ __all__ = ['generate_fes']
 def generate_fes(data, interactive=False, error_estimate=None, **params):
     # alter this line for custom FES calculation
     # if interactive: a tuple (grid, fes, fes_error) should be returned
-    return generate_fes_thermolib(data,interactive=interactive,error_estimate=error_estimate,**params)
+    #return generate_fes_thermolib(data,interactive=interactive,error_estimate=error_estimate,**params)
+    return generate_fes_WHAM(data,interactive=interactive,**params)
 
 def get_executable(name):
     def is_tool(name):

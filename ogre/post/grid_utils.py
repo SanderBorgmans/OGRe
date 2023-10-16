@@ -453,12 +453,6 @@ def plot_fes(data,grid,fes,index,avg_window=1,suffix=None,fes_err=None):
         avg_fes = np.convolve(fes, np.ones((N,))/N, mode='valid')
         avg_grid = np.convolve(grid[:,0], np.ones((N,))/N, mode='valid')
 
-        try:
-            potential = load_potential_file('./potential.py').Potential
-            ax.plot(avg_grid,potential.eval(avg_grid)-np.min(potential.eval(avg_grid)),'--')
-        except (FileNotFoundError,NotImplementedError):
-            if data['mode'] == 'analytical':
-                print('There was no potential.py file or eval method available for comparison with calculated FES')
         ax.plot(avg_grid,avg_fes-np.nanmin(avg_fes))
 
         if fes_err is not None and not np.isnan(fes_err).all():
