@@ -29,7 +29,7 @@ class Grid:
         self.RUN_UP_TIME          = self.data['runup']                if 'runup'                in self.data else 0
         self.MAX_LAYERS           = self.data['MAX_LAYERS']           if 'MAX_LAYERS'           in self.data else 1
         self.CONFINEMENT_THR      = self.data['CONFINEMENT_THR']      if 'CONFINEMENT_THR'      in self.data else 0.30
-        self.JS_THR               = self.data['JS_THR']               if 'JS_THR'               in self.data else None
+        self.CONVERGENCE_THR      = self.data['CONVERGENCE_THR']      if 'CONVERGENCE_THR'      in self.data else None
         self.OVERLAP_THR          = self.data['OVERLAP_THR']          if 'OVERLAP_THR'          in self.data else 0.30
         self.KAPPA_GROWTH_FACTOR  = self.data['KAPPA_GROWTH_FACTOR']  if 'KAPPA_GROWTH_FACTOR'  in self.data else 2.
         self.MAX_KAPPA            = self.data['MAX_KAPPA']            if 'MAX_KAPPA'            in self.data else np.inf
